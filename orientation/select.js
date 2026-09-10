@@ -17,7 +17,7 @@ export function initOrientationPhase() {
       const ctx = canvas.getContext('2d');
 
       const ringImage = new Image();
-      ringImage.src = '/Ring1.png';
+      ringImage.src = '/public/Ring1.png';
 
       // speedSlot: this character's fixed speed-tier slot in combat (one
       // of the 7 "*2" slots reserved for players -- see
