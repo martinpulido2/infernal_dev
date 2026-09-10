@@ -768,9 +768,23 @@ export function resetQueuePool() {
 // dots and the gesture-preview ghost).
 const snapshotGhosts = {};
 
-export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById, guardianAssignment) {
+// `excludeId` -- the snapshot's own subject unit (whichever unit's turn
+// this future step represents). Per explicit user feedback: that unit is
+// necessarily ON the action line at this snapshot moment (its `angle` in
+// the snapshot is always 0, by construction -- see computeQueueForecast's
+// own `best.angle = 0` above), which is true as a matter of course for
+// ANY selected queue slot and so tells the player nothing new -- the
+// preview's entire point is showing where OTHER units land relative to
+// that turn. Worse, rendering it anyway plants a low-opacity ghost right
+// on top of whichever unit is genuinely on the action line at the moment
+// the preview is opened (the common case -- previewing mid-turn, not
+// only during the paused between-turns window), which reads as visual
+// noise rather than information. So the subject's own dot is suppressed
+// from the ring projection; every other unit's is still shown.
+export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById, guardianAssignment, excludeId) {
   const stillNeeded = new Set();
   snapshotEntries.forEach(({ id, angle }) => {
+    if (id === excludeId) return;
     const unit = liveUnitsById.get(id);
     if (!unit) return;
     stillNeeded.add(id);

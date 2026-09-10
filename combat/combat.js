@@ -551,7 +551,7 @@ function handleQueueIconTap(entry, index) {
   }
   selectedQueueIndex = index;
   selectedQueueSnapshot = entry.snapshot;
-  showQueueSnapshot(queueSnapshotLayer, entry.snapshot, unitsById(), guardianAssignment);
+  showQueueSnapshot(queueSnapshotLayer, entry.snapshot, unitsById(), guardianAssignment, entry.id);
 }
 
 function clearQueueSnapshotSelection() {
@@ -709,7 +709,13 @@ function updateSpeedQueueDisplay() {
   // undo) -- cheap redundancy, not a hot path.
   if (selectedQueueIndex !== null && forecast[selectedQueueIndex]) {
     selectedQueueSnapshot = forecast[selectedQueueIndex].snapshot;
-    showQueueSnapshot(queueSnapshotLayer, selectedQueueSnapshot, unitsById(), guardianAssignment);
+    showQueueSnapshot(
+      queueSnapshotLayer,
+      selectedQueueSnapshot,
+      unitsById(),
+      guardianAssignment,
+      forecast[selectedQueueIndex].id
+    );
   }
 }
 const dragPreviewLayer = document.getElementById('drag-preview-layer');
