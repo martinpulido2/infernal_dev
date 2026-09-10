@@ -1238,7 +1238,7 @@ function renderDeclarationScreen() {
         const marker = document.createElement('div');
         marker.style.cssText = `
           width:18px; height:18px; background-color:#fff;
-          -webkit-mask-image:url('/LH.png'); mask-image:url('/LH.png');
+          -webkit-mask-image:url('/public/LH.png'); mask-image:url('/public/LH.png');
           -webkit-mask-size:contain; mask-size:contain;
           -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
           -webkit-mask-position:center; mask-position:center;
@@ -2103,7 +2103,7 @@ function renderPlayerConsoleImmediate(pNum) {
     el.style.cssText += `position:absolute; left:calc(50% + ${dx}px); top:calc(50% + ${dy}px); transform:translate(-50%,-50%);`;
   }
 
-  const consumeBtn = makeImageButton('/consumeicon.png');
+  const consumeBtn = makeImageButton('/public/consumeicon.png');
   placeOnFlank(consumeBtn, 180 - flankAngle); // bottom-left
   consumeBtn.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
@@ -2132,7 +2132,7 @@ function renderPlayerConsoleImmediate(pNum) {
   });
   card.appendChild(consumeBtn);
 
-  const taintBtn = makeImageButton('/tainticon.png');
+  const taintBtn = makeImageButton('/public/tainticon.png');
   placeOnFlank(taintBtn, flankAngle); // bottom-right
   taintBtn.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
@@ -2250,12 +2250,12 @@ function renderPlayerConsoleImmediate(pNum) {
     return el;
   }
   if (corruptionLevel >= 3) {
-    const cl3Badge = makeBadge('/corruption-level-3.png');
+    const cl3Badge = makeBadge('/public/corruption-level-3.png');
     placeBadge(cl3Badge, BADGE_R_1);
     card.appendChild(cl3Badge);
   }
   if (corruptionLevel >= 4) {
-    const cl4Badge = makeBadge('/corruption-level-4.png');
+    const cl4Badge = makeBadge('/public/corruption-level-4.png');
     placeBadge(cl4Badge, BADGE_R_2);
     card.appendChild(cl4Badge);
   }
@@ -5153,10 +5153,10 @@ export function startCombatPhase() {
   // during combat" symptom for any of these that DO exist as real files.
   preloadImages([
     ...Object.values(PLAYER_CHARACTERS).map((c) => c.icon),
-    '/consumeicon.png',
-    '/tainticon.png',
-    '/corruption-level-3.png',
-    '/corruption-level-4.png',
+    '/public/consumeicon.png',
+    '/public/tainticon.png',
+    '/public/corruption-level-3.png',
+    '/public/corruption-level-4.png',
   ]);
   guardianAssignment = {};
   fiendAssignment = {};
