@@ -17,7 +17,7 @@ export function initOrientationPhase() {
       const ctx = canvas.getContext('2d');
 
       const ringImage = new Image();
-      ringImage.src = 'Ring1.png';
+      ringImage.src = '/Ring1.png';
 
       // speedSlot: this character's fixed speed-tier slot in combat (one
       // of the 7 "*2" slots reserved for players -- see
@@ -31,7 +31,7 @@ export function initOrientationPhase() {
           name: 'Obsidium',
           colorClass: 'token-obsidium',
           hex: '#e53935',
-          src: 'obsidium.png',
+          src: '/obsidium.png',
           speedSlot: 'LS2',
           combatIcon: '/obsidiumicon.png',
         },
@@ -40,7 +40,7 @@ export function initOrientationPhase() {
           name: 'Ryadnae',
           colorClass: 'token-ryadnae',
           hex: '#1e88e5',
-          src: 'Ryadnae.png',
+          src: '/Ryadnae.png',
           speedSlot: 'SW2',
           combatIcon: '/ryadnaeicon.png',
         },
@@ -49,7 +49,7 @@ export function initOrientationPhase() {
           name: 'Siria',
           colorClass: 'token-siria',
           hex: '#43a047',
-          src: 'siria.png',
+          src: '/siria.png',
           speedSlot: 'N2',
           combatIcon: '/siriaicon.png', // TODO: confirm actual filename
         },
@@ -58,7 +58,7 @@ export function initOrientationPhase() {
           name: 'Marek',
           colorClass: 'token-marek',
           hex: '#fdd835',
-          src: 'Marek.png',
+          src: '/Marek.png',
           speedSlot: 'F2',
           combatIcon: '/marekicon.png', // TODO: confirm actual filename
         },
