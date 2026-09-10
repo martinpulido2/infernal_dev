@@ -440,6 +440,7 @@ export function initOrientationPhase() {
         const arrow = document.createElement('div');
         arrow.className = 'orientation-arrow';
         arrow.style.color = player.colorHex;
+        arrow.style.backgroundImage = "url('/public/Arrow.png')";
         Object.assign(arrow.style, positionStyle);
         // The blink animation (arrowBlink) drives `transform` itself each
         // frame, so a plain inline `transform: rotate()` here would just
