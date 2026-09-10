@@ -1,0 +1,10 @@
+{
+  "name": "inferno-descent",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Merged orientation-select + descent map + combat modules",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  }
+}

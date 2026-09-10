@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<!-- viewport-fit=cover + the env(safe-area-inset-*) below matter if this
+     ever runs inside an iPad's rounded-corner/home-indicator safe area,
+     e.g. as an added-to-homescreen PWA rather than always-fullscreen. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="mobile-web-app-capable" content="yes" />
+
+<style>
+  /* Belongs at the very top of the shell's global stylesheet — every
+     phase's own <style> block still applies on top of this, it's just
+     the shared baseline none of the three had consistently before. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    /* 100vh on iOS Safari includes the address bar's eventual space,
+       causing a visible resize-jump on load; 100dvh (dynamic viewport
+       height) doesn't. Once installPlatformHardening()'s fullscreen
+       request lands this stops mattering much, but it fixes the visible
+       flash during the pre-fullscreen instant. dvh has been supported in
+       Safari since 15.4 -- fine for this iPad-targeted build. */
+    height: 100dvh;
+    width: 100vw;
+    overflow: hidden;
+    /* Stops the whole page from rubber-band-scrolling/bouncing as a unit
+       when a touch drag starts outside any touch-action:none element —
+       e.g. the empty margin around a player console, or a mis-timed drag
+       on the map background. Individual interactive elements (drag
+       stats, the ring SVG, etc.) still declare their own touch-action as
+       they already did in main.js; this is the global backstop for
+       everything that doesn't. */
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-touch-callout: none; /* suppresses iOS's long-press
+                                     copy/save-image/share menu on any
+                                     element — was previously only an
+                                     issue main.js's per-element CSS
+                                     didn't fully cover either */
+    -webkit-user-select: none;
+    user-select: none;
+    background: #0b0706; /* matches a.'s body background so there's no
+                             flash-of-wrong-color between phase swaps */
+  }
+
+  #app-shell {
+    position: fixed;
+    inset: 0;
+    /* Previously had padding-*: env(safe-area-inset-*) here, on the
+       assumption it becomes 0 once fullscreen is active. That assumption
+       doesn't hold on every tablet/browser -- some report a non-zero
+       inset even in fullscreen (e.g. for a persistent gesture bar), which
+       is what was pushing every corner's player area away from the true
+       screen edge instead of sitting flush against it as intended.
+       Removed rather than tuned, since this app always wants true
+       edge-to-edge layout in its landscape/fullscreen use case. */
+    box-sizing: border-box;
+  }
+
+  /* Each phase container fills the shell exactly -- this is what "not
+     running over edges" comes down to structurally: every phase already
+     independently uses position:fixed/inset:0 or width:100vw/100%
+     internally (map's <svg> is width/height:100%; combat's #ring is
+     100vw/100vh; a.'s .app-container is 100vw/100vh) -- none of the
+     three actually disagree on this, they just never shared a common
+     parent enforcing it consistently before. */
+  #screen-orientation, #screen-map, #screen-combat {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+</style>
+
+    <title>Inferno -- Descent</title>
+    <style>
+      /* --- a.'s original styles, unchanged, scoped under #screen-orientation --- */
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body,
+      html {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #0b0706;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+
+      .app-container {
+        width: 100vw;
+        height: 100dvh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        position: relative;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .instruction-overlay {
+        position: absolute;
+        bottom: 30px;
+        width: 100%;
+        text-align: center;
+        color: #ff8c00;
+        font-size: 13px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        pointer-events: none;
+        opacity: 0.8;
+        z-index: 10;
+      }
+
+      /* UI Layer for Character Selection Screen */
+      #charSelectUI {
+        display: none;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+
+      /* Player Consoles at the 4 quadrants (440px x 440px) */
+      .player-console {
+        position: absolute;
+        width: 440px;
+        height: 440px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        grid-template-rows: repeat(2, 1fr);
+        gap: 16px;
+        padding: 16px;
+        pointer-events: auto;
+      }
+
+      /* Corner Orientations */
+      .corner-top-left {
+        top: 20px;
+        left: 20px;
+        transform: rotate(90deg);
+      }
+      .corner-top-right {
+        top: 20px;
+        right: 20px;
+        transform: rotate(270deg);
+      }
+      .corner-bottom-left {
+        bottom: 20px;
+        left: 20px;
+        transform: rotate(90deg);
+      }
+      .corner-bottom-right {
+        bottom: 20px;
+        right: 20px;
+        transform: rotate(270deg);
+      }
+
+      /* Character Token Style (170px) */
+      .char-token {
+        width: 170px;
+        height: 170px;
+        border-radius: 50%;
+        border: 6px solid #555;
+        overflow: hidden;
+        cursor: pointer;
+        position: relative;
+        transition: transform 0.15s ease, filter 0.2s ease,
+          border-color 0.2s ease;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+      }
+
+      .char-token img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      /* Color Coding */
+      .token-obsidium {
+        border-color: #e53935;
+      }
+      .token-ryadnae {
+        border-color: #1e88e5;
+      }
+      .token-siria {
+        border-color: #43a047;
+      }
+      .token-marek {
+        border-color: #fdd835;
+      }
+
+      /* States */
+      .char-token.selected {
+        transform: scale(1.08);
+        /* Brighter + pulsing rather than a single static glow -- the flat
+           0.8-opacity shadow this replaces was hard to spot at a glance
+           on a bright tablet screen, especially with 3-4 tokens all lit
+           at once across different corners. */
+        animation: charTokenPulse 1.6s ease-in-out infinite;
+      }
+      @keyframes charTokenPulse {
+        0%, 100% {
+          box-shadow: 0 0 14px 5px rgba(255, 255, 255, 0.95), 0 0 42px 16px rgba(255, 255, 255, 0.55);
+        }
+        50% {
+          box-shadow: 0 0 20px 7px rgba(255, 255, 255, 1), 0 0 58px 22px rgba(255, 255, 255, 0.85);
+        }
+      }
+      .char-token.disabled {
+        filter: grayscale(85%) brightness(0.4);
+        cursor: not-allowed;
+        transform: scale(0.95);
+      }
+
+      /* "P1"/"P2"/etc, shown on whichever character a player has
+         selected -- ordered by who selected FIRST, not by fixed corner
+         position (see selectionSequence in select.js). Nested inside the
+         token, which is already rotated to match that player's own seat,
+         so this inherits the correct orientation for free rather than
+         needing its own rotation math. Centered on the token (not
+         corner-pinned) so it reads as "this is P1's character" sitting
+         squarely on the art, rather than a small tag poking off to one
+         side of it. */
+      .char-token .player-badge {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.78);
+        color: #fff;
+        font-weight: 900;
+        font-size: 34px;
+        padding: 6px 16px;
+        border-radius: 10px;
+        border: 3px solid #fff;
+        display: none;
+        pointer-events: none;
+        font-family: 'Georgia', 'Times New Roman', serif;
+        z-index: 2;
+        white-space: nowrap;
+      }
+      .char-token.selected .player-badge {
+        display: block;
+      }
+
+      /* Central Green Lock-In Button — hidden until at least one player
+         has picked a character (see updateConsoleUI), so a double-tap on
+         the portal doesn't land directly on it. */
+      #centerActionHub {
+        display: none;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        pointer-events: auto;
+      }
+      #centerActionHub.visible {
+        display: flex;
+      }
+
+      .green-lock-btn {
+        width: 140px;
+        height: 140px;
+        background: #43a047;
+        border: 8px solid #2e7d32;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 0 40px rgba(67, 160, 71, 0.6);
+        transition: transform 0.1s ease, background 0.2s ease;
+      }
+      .green-lock-btn:hover {
+        background: #4caf50;
+        transform: scale(1.05);
+      }
+
+      .status-text {
+        color: #ccc;
+        font-size: 12px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        text-align: center;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 4px 10px;
+        border-radius: 4px;
+      }
+
+      /* Orientation Selector UI Layer */
+      #orientationSelectUI {
+        display: none;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+
+      .orientation-corner {
+        position: absolute;
+        width: 300px;
+        height: 300px;
+        pointer-events: auto;
+      }
+
+      .orient-top-left {
+        top: 0;
+        left: 0;
+      }
+      .orient-top-right {
+        top: 0;
+        right: 0;
+      }
+      .orient-bottom-left {
+        bottom: 0;
+        left: 0;
+      }
+      .orient-bottom-right {
+        bottom: 0;
+        right: 0;
+      }
+
+      @keyframes arrowBlink {
+        0% {
+          opacity: 0.5;
+          transform: rotate(var(--arrow-rotation, 0deg)) scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: rotate(var(--arrow-rotation, 0deg)) scale(1.1);
+          filter: drop-shadow(0 0 20px currentColor);
+        }
+        100% {
+          opacity: 0.5;
+          transform: rotate(var(--arrow-rotation, 0deg)) scale(1);
+        }
+      }
+
+      .orientation-arrow {
+        position: absolute;
+        width: 70px;
+        height: 70px;
+        cursor: pointer;
+        animation: arrowBlink 1.5s infinite ease-in-out;
+        /* The arrow is tinted solidly via mask rather than shown as a
+           background-image, so it reads as a distinct, saturated color
+           instead of a dim black glyph with a colored glow around it.
+           color is set per-arrow in JS (to the player's hex) and feeds
+           both background-color (the fill) and currentColor (the glow
+           above). */
+        background-color: currentColor;
+        -webkit-mask-image: url('Arrow.png');
+        mask-image: url('Arrow.png');
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+      }
+
+      /* Player Labels — appended directly into each player's
+         .orientation-corner div as soon as they pick an orientation,
+         so there's no separate "game active" screen to swap to. */
+      .player-label {
+        position: absolute;
+        font-size: 28px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+      }
+    
+    </style>
+  </head>
+  <body>
+    <div id="app-shell">
+      <div id="screen-orientation">
+<div class="app-container">
+      <!-- Vortex & Ring Canvas -->
+      <canvas id="vortexCanvas"></canvas>
+      <div id="ringInstruction" class="instruction-overlay">
+        Double-tap the Abyss to Begin Descent
+      </div>
+
+      <!-- Character Selection UI Layer -->
+      <div id="charSelectUI">
+        <div class="player-console corner-top-left" data-player="0"></div>
+        <div class="player-console corner-top-right" data-player="1"></div>
+        <div class="player-console corner-bottom-left" data-player="2"></div>
+        <div class="player-console corner-bottom-right" data-player="3"></div>
+
+        <div id="centerActionHub">
+          <button
+            class="green-lock-btn"
+            id="lockInBtn"
+            title="Lock In Selection"
+          ></button>
+          <div class="status-text" id="statusMessage">
+            Select 1-4 Characters
+          </div>
+        </div>
+      </div>
+
+      <!-- Orientation Selector UI Layer. Each player's blinking arrows,
+           and later their locked-in "Player N" label, live here inside
+           that player's .orientation-corner div — see setupOrientationSelector
+           / chooseOrientation below. -->
+      <div id="orientationSelectUI"></div>
+    </div>
+      </div>
+      <div id="screen-map"></div>
+      <div id="screen-combat">
+        <!-- combat.js builds all of its own markup into whatever element
+             has id="app" -- see combat/combat.js's `const app =
+             document.getElementById('app')` at the top of the file. This
+             div IS that element; combat.js doesn't need to change to find
+             it, the shell just needs to make sure exactly one element
+             with id="app" exists, nested here rather than at body level. -->
+        <div id="app"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { installPlatformHardening } from './platformHardening.js';
+      import { getState, subscribe } from './gameState.js';
+      import { initOrientationPhase } from './orientation/select.js';
+      import { mountMapPhase, unmountMapPhase } from './map/mapPhase.js';
+      import { startCombatPhase } from './combat/combat.js';
+
+      // Installed ONCE for the whole app -- fullscreen-on-first-tap,
+      // rotate-to-landscape fallback, and all three layers of zoom
+      // prevention. See platformHardening.js and INTEGRATION_NOTES.md.
+      const preloadsReady = installPlatformHardening({
+        preloadImages: [
+          'Ring1.png', 'Arrow.png',
+          'obsidium.png', 'Ryadnae.png', 'siria.png', 'Marek.png',
+          '/ryadnaeicon.png', '/obsidiumicon.png', '/siriaicon.png', '/marekicon.png',
+          '/consumeicon.png', '/tainticon.png',
+          '/corruption-level-3.png', '/corruption-level-4.png',
+        ],
+      });
+
+      const screens = {
+        ORIENTATION: document.getElementById('screen-orientation'),
+        MAP: document.getElementById('screen-map'),
+        COMBAT: document.getElementById('screen-combat'),
+      };
+
+      let mountedMap = false;
+      let mountedCombatForPendingId = null;
+
+      function showPhase(phase) {
+        for (const [name, el] of Object.entries(screens)) {
+          el.style.display = name === phase ? '' : 'none';
+        }
+      }
+
+      subscribe((state) => {
+        showPhase(state.phase);
+
+        if (state.phase === 'MAP' && !mountedMap) {
+          mountedMap = true;
+          mountMapPhase(screens.MAP);
+        }
+        // Map phase container is kept mounted (just hidden) rather than
+        // torn down on every phase switch -- cheaper, and mapPhase.js's
+        // own gameState subscription already no-ops while phase !== 'MAP'.
+
+        if (state.phase === 'COMBAT' && state.pendingCombat) {
+          const id = state.pendingCombat.nodeId;
+          if (mountedCombatForPendingId !== id) {
+            mountedCombatForPendingId = id;
+            startCombatPhase();
+          }
+        } else {
+          mountedCombatForPendingId = null;
+        }
+      });
+
+      // Kick off whichever phase gameState is already in (fresh load ->
+      // ORIENTATION; a mid-run refresh restores wherever sessionStorage
+      // left off, per gameState.js's own persistence). Delayed until
+      // preloadsReady resolves so a.'s Arrow.png-masked elements (visible
+      // from its very first frame) never render before that asset has
+      // actually finished loading -- see platformHardening.js's own
+      // comment on preloadImage for the race this closes.
+      preloadsReady.then(() => {
+        initOrientationPhase();
+        showPhase(getState().phase);
+        if (getState().phase === 'MAP') { mountedMap = true; mountMapPhase(screens.MAP); }
+        if (getState().phase === 'COMBAT') { startCombatPhase(); }
+      });
+    </script>
+  </body>
+</html>

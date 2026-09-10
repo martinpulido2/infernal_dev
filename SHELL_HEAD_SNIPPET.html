@@ -1,0 +1,80 @@
+<!--
+  SHELL_HEAD_SNIPPET.html — drop this into the merged project's single
+  index.html <head>, replacing whatever <meta viewport> a. currently has
+  (a.'s was plain "width=device-width, initial-scale=1.0" — missing the
+  scale-locking that main.js's JS-level zoom prevention was compensating
+  for at runtime; belt-and-suspenders is better than JS alone since it
+  also prevents the initial-load flash of the OS zoom UI before your JS
+  listeners attach).
+-->
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<!-- viewport-fit=cover + the env(safe-area-inset-*) below matter if this
+     ever runs inside an iPad's rounded-corner/home-indicator safe area,
+     e.g. as an added-to-homescreen PWA rather than always-fullscreen. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="mobile-web-app-capable" content="yes" />
+
+<style>
+  /* Belongs at the very top of the shell's global stylesheet — every
+     phase's own <style> block still applies on top of this, it's just
+     the shared baseline none of the three had consistently before. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    /* 100vh on iOS Safari includes the address bar's eventual space,
+       causing a visible resize-jump on load; 100dvh (dynamic viewport
+       height) doesn't. Once installPlatformHardening()'s fullscreen
+       request lands this stops mattering much, but it fixes the visible
+       flash during the pre-fullscreen instant. dvh has been supported in
+       Safari since 15.4 -- fine for this iPad-targeted build. */
+    height: 100dvh;
+    width: 100vw;
+    overflow: hidden;
+    /* Stops the whole page from rubber-band-scrolling/bouncing as a unit
+       when a touch drag starts outside any touch-action:none element —
+       e.g. the empty margin around a player console, or a mis-timed drag
+       on the map background. Individual interactive elements (drag
+       stats, the ring SVG, etc.) still declare their own touch-action as
+       they already did in main.js; this is the global backstop for
+       everything that doesn't. */
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-touch-callout: none; /* suppresses iOS's long-press
+                                     copy/save-image/share menu on any
+                                     element — was previously only an
+                                     issue main.js's per-element CSS
+                                     didn't fully cover either */
+    -webkit-user-select: none;
+    user-select: none;
+    background: #0b0706; /* matches a.'s body background so there's no
+                             flash-of-wrong-color between phase swaps */
+  }
+
+  #app-shell {
+    position: fixed;
+    inset: 0;
+    /* padding-* + safe-area-inset: only matters outside true fullscreen
+       (see viewport-fit=cover note above) -- harmless no-op once
+       fullscreen is active, since inset() is then already 0 everywhere. */
+    padding-top: env(safe-area-inset-top);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    box-sizing: border-box;
+  }
+
+  /* Each phase container fills the shell exactly -- this is what "not
+     running over edges" comes down to structurally: every phase already
+     independently uses position:fixed/inset:0 or width:100vw/100%
+     internally (map's <svg> is width/height:100%; combat's #ring is
+     100vw/100vh; a.'s .app-container is 100vw/100vh) -- none of the
+     three actually disagree on this, they just never shared a common
+     parent enforcing it consistently before. */
+  #screen-orientation, #screen-map, #screen-combat {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+</style>
