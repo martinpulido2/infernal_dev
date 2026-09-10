@@ -31,36 +31,36 @@ export function initOrientationPhase() {
           name: 'Obsidium',
           colorClass: 'token-obsidium',
           hex: '#e53935',
-          src: '/obsidium.png',
+          src: '/public/obsidium.png',
           speedSlot: 'LS2',
-          combatIcon: '/obsidiumicon.png',
+          combatIcon: '/public/obsidiumicon.png',
         },
         {
           id: 'ryadnae',
           name: 'Ryadnae',
           colorClass: 'token-ryadnae',
           hex: '#1e88e5',
-          src: '/Ryadnae.png',
+          src: '/public/Ryadnae.png',
           speedSlot: 'SW2',
-          combatIcon: '/ryadnaeicon.png',
+          combatIcon: '/public/ryadnaeicon.png',
         },
         {
           id: 'siria',
           name: 'Siria',
           colorClass: 'token-siria',
           hex: '#43a047',
-          src: '/siria.png',
+          src: '/public/siria.png',
           speedSlot: 'N2',
-          combatIcon: '/siriaicon.png', // TODO: confirm actual filename
+          combatIcon: '/public/siriaicon.png', // TODO: confirm actual filename
         },
         {
           id: 'marek',
           name: 'Marek',
           colorClass: 'token-marek',
           hex: '#fdd835',
-          src: '/Marek.png',
+          src: '/public/Marek.png',
           speedSlot: 'F2',
-          combatIcon: '/marekicon.png', // TODO: confirm actual filename
+          combatIcon: '/public/marekicon.png', // TODO: confirm actual filename
         },
       ];
 
