@@ -24,7 +24,7 @@ const STORAGE_KEY = 'inferno_run_state_v1';
 //     charId: 'ryadnae',              // from charData in orientation/select.js
 //     name: 'Ryadnae',
 //     color: '#1e88e5',
-//     icon: '/ryadnaeicon.png',       // combat token icon
+//     icon: '/public/ryadnaeicon.png', // combat token icon
 //     slot: 'SW2',                    // speed-tier slot, one of the 7 "*2" slots
 //     corner: 0,                      // 0=TL,1=TR,2=BL,3=BR — the SCREEN corner
 //                                     // their console/card renders in

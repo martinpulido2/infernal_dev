@@ -746,19 +746,29 @@ export function resetQueuePool() {
     overlay.ghost.g.remove();
   });
   previewOverlayPool.clear();
-  clearQueueSnapshot();
+  Object.keys(snapshotGhosts).forEach((id) => {
+    snapshotGhosts[id].g.remove();
+    delete snapshotGhosts[id];
+  });
 }
 
 // --- SIMULATION SNAPSHOT (TRD 3.1) -------------------------------------
 
-// Ghost dots projected onto BOTH rings for a snapshot -- a separate pool
+// Ghost icons projected onto BOTH rings for a snapshot -- a separate pool
 // from combat.js's own drag-preview speedGhostDots, since the two modes
 // (mid-gesture forecast vs. tap-to-freeze snapshot) are never active at
 // the same time but are conceptually distinct and it keeps this module
-// fully self-contained.
+// fully self-contained. Built from the same buildIconFace()/paintIconFace()
+// pair as the queue icon pool and the gesture-preview overlay's ghost
+// above, so all three forecast/preview treatments read as the same visual
+// language: a 50%-opacity copy of the unit's own face, not a dashed
+// placeholder circle (the dashed-circle version this replaced made it
+// harder to tell which unit a projected dot belonged to, inconsistent
+// with the low-opacity "clone" already used for the speed-ring forecast
+// dots and the gesture-preview ghost).
 const snapshotGhosts = {};
 
-export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById) {
+export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById, guardianAssignment) {
   const stillNeeded = new Set();
   snapshotEntries.forEach(({ id, angle }) => {
     const unit = liveUnitsById.get(id);
@@ -767,23 +777,17 @@ export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById) {
 
     let ghost = snapshotGhosts[id];
     if (!ghost) {
-      const g = document.createElementNS(SVG_NS, 'g');
-      g.style.pointerEvents = 'none';
-      const circle = document.createElementNS(SVG_NS, 'circle');
-      circle.setAttribute('r', '9');
-      circle.setAttribute('fill', 'none');
-      circle.setAttribute('stroke-width', '2.5');
-      circle.setAttribute('stroke-dasharray', '3 3');
-      g.appendChild(circle);
-      layer.appendChild(g);
-      ghost = { g, circle };
+      const face = buildIconFace(8);
+      face.g.style.pointerEvents = 'none';
+      layer.appendChild(face.g);
+      ghost = face;
       snapshotGhosts[id] = ghost;
     }
 
     const pos = polarPoint(unit.radius, angle);
     ghost.g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
-    ghost.circle.setAttribute('stroke', unit.color);
-    ghost.g.style.opacity = '0.85';
+    paintIconFace(ghost, unit, guardianAssignment);
+    ghost.g.style.opacity = '0.5';
   });
 
   Object.keys(snapshotGhosts).forEach((id) => {
