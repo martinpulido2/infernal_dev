@@ -1404,7 +1404,7 @@ victoryScreen.style.cssText = `
   position:fixed; inset:0; display:none; align-items:center; justify-content:center;
   z-index:60; pointer-events:auto; touch-action:none;
 `;
-victoryScreen.innerHTML = `<img src="/victory.png" style="width:260px; height:260px; pointer-events:none;" />`;
+victoryScreen.innerHTML = `<img src="/public/victory.png" style="width:260px; height:260px; pointer-events:none;" />`;
 document.getElementById('app').appendChild(victoryScreen);
 
 // No defeat art has been supplied yet — placeholder text treatment,
