@@ -62,3 +62,13 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`Serving ${ROOT} on port ${PORT}`);
 });
+
+// Replace server.listen(...) with an export check:
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Serving ${ROOT} on port ${PORT}`);
+  });
+}
+
+// Export for Vercel's serverless environment
+module.exports = server;
