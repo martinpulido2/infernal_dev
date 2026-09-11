@@ -649,8 +649,31 @@ export function buildExpandedQueueDisplay({ committedForecast, previewForecast, 
   }
 
   const movedSet = new Set(movedIds);
-  const committedIndexOf = new Map(committedForecast.map((e, i) => [e.id, i]));
-  const previewIndexOf = new Map(previewForecast.map((e, i) => [e.id, i]));
+  // FIRST-occurrence index of each id -- built by hand rather than
+  // `new Map(arr.map((e,i) => [e.id,i]))`, which silently keeps the LAST
+  // matching entry instead (each repeated key's `.set()` overwrites the
+  // one before it). A fast enough unit legitimately appears more than
+  // once in a single forecast (it laps the line again before someone
+  // slower gets even their first turn -- see computeQueueForecast's own
+  // "fast unit laps a slow one" test) and that repeat entry is exactly
+  // the shape a speed-up preview produces: the tracked unit's FIRST
+  // occurrence is the very turn moving up is about, but the overwrite
+  // bug pointed oldIndex/newIndex at whichever occurrence happened to be
+  // simulated LAST instead -- silently substituting a LATER lap for the
+  // soonest one, which is indistinguishable from "the unit's turn got
+  // skipped" from the display's own perspective (a real, reported
+  // symptom: a unit sped up enough to lap someone before that bystander's
+  // own first turn rendered as if it had fallen BEHIND that bystander,
+  // recovering only once the real game actually played forward past it).
+  function firstIndexOf(forecastArr) {
+    const map = new Map();
+    forecastArr.forEach((e, i) => {
+      if (!map.has(e.id)) map.set(e.id, i);
+    });
+    return map;
+  }
+  const committedIndexOf = firstIndexOf(committedForecast);
+  const previewIndexOf = firstIndexOf(previewForecast);
 
   // Bystanders, in their shared (committed === preview) relative order.
   const working = previewForecast
