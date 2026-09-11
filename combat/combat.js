@@ -17,6 +17,7 @@ import {
   getEnemyQueueLabel,
   renderQueuePreviewOverlay,
   clearQueuePreviewOverlay,
+  buildExpandedQueueDisplay,
   resetQueuePool,
 } from './speedQueue.js';
 
@@ -551,7 +552,7 @@ function handleQueueIconTap(entry, index) {
   }
   selectedQueueIndex = index;
   selectedQueueSnapshot = entry.snapshot;
-  showQueueSnapshot(queueSnapshotLayer, entry.snapshot, unitsById(), guardianAssignment, entry.id);
+  showQueueSnapshot(queueSnapshotLayer, entry.snapshot, unitsById(), guardianAssignment);
 }
 
 function clearQueueSnapshotSelection() {
@@ -666,23 +667,34 @@ function updateSpeedQueueDisplay() {
     });
   }
 
-  // Per explicit user feedback + a mockup (round 2 of the queue's visual
-  // design): freezing bystanders during a preview (the PREVIOUS attempt
-  // at fixing the ghost/replacement-icon collision) traded one problem
-  // for another -- a unit's floating "new position" marker still landed
-  // on top of whichever bystander's UNCHANGED slot happened to share
-  // that same angleForSlot() index, AND the queue no longer showed
-  // where anything else in the order actually ended up during a preview.
-  // Rendering the REAL pooled queue from the CANDIDATE forecast (letting
-  // the whole row reflow, same as before either fix) solves both: every
-  // unit's resulting position is visible at a glance, and the tracked
-  // unit's old slot is genuinely VACATED by the reflow (everyone between
-  // old and new slides by exactly one), so the ghost overlay below no
-  // longer has anything real to collide with.
-  const forecast = queuePreviewOverride ? previewForecast : committedForecast;
+  // Per explicit user feedback + a mockup (round 3 of the queue's visual
+  // design): reflowing bystanders INTO the tracked unit's vacated old
+  // slot (the previous fix, round 2) traded one collision for another --
+  // that slot's angleForSlot() index is then shared by both the ghost
+  // drawn there AND the bystander who just reflowed into it. Round 3
+  // reserves that slot instead of reflowing into it: buildExpandedQueueDisplay()
+  // (see its own extensive comment) inserts an actual gap into the
+  // rendered queue at the tracked unit's old slot, so bystanders shift
+  // OUTWARD around it rather than into it, and the tracked unit's real
+  // icon lands one slot further out than its raw preview-forecast index
+  // to make room. `expandedForecast` is what actually gets rendered as
+  // the real queue below; `slotsByUnitId` tells renderQueuePreviewOverlay
+  // exactly which expanded slots the ghost and the real icon ended up in
+  // (it can no longer work that out itself via a plain findIndex on the
+  // raw forecasts -- see that function's own comment).
+  let expandedForecast = committedForecast;
+  let slotsByUnitId = new Map();
+  if (queuePreviewOverride) {
+    ({ expandedForecast, slotsByUnitId } = buildExpandedQueueDisplay({
+      committedForecast,
+      previewForecast,
+      trackedIds: queuePreviewOverride.trackedUnitIds,
+    }));
+  }
+
   renderSpeedQueue({
     layer: speedQueueLayer,
-    forecast,
+    forecast: expandedForecast,
     liveUnitsById: unitsById(),
     guardianAssignment,
     radius: QUEUE_RADIUS,
@@ -693,8 +705,7 @@ function updateSpeedQueueDisplay() {
   if (queuePreviewOverride) {
     renderQueuePreviewOverlay({
       layer: speedQueueLayer,
-      committedForecast,
-      previewForecast,
+      slotsByUnitId,
       unitIds: queuePreviewOverride.trackedUnitIds,
       radius: QUEUE_RADIUS,
       liveUnitsById: unitsById(),
@@ -706,16 +717,15 @@ function updateSpeedQueueDisplay() {
 
   // Live-refresh an active snapshot so it stays correct if the player
   // re-opens the same slot after something upstream changed (e.g. an
-  // undo) -- cheap redundancy, not a hot path.
-  if (selectedQueueIndex !== null && forecast[selectedQueueIndex]) {
-    selectedQueueSnapshot = forecast[selectedQueueIndex].snapshot;
-    showQueueSnapshot(
-      queueSnapshotLayer,
-      selectedQueueSnapshot,
-      unitsById(),
-      guardianAssignment,
-      forecast[selectedQueueIndex].id
-    );
+  // undo) -- cheap redundancy, not a hot path. Guards against
+  // isGhostPlaceholder too: selecting a snapshot and starting a live drag
+  // preview at the same time isn't a normal flow, but if it ever
+  // happens, `selectedQueueIndex` could momentarily point at a reserved
+  // gap slot (see buildExpandedQueueDisplay) rather than a real entry.
+  const selectedEntry = selectedQueueIndex !== null ? expandedForecast[selectedQueueIndex] : null;
+  if (selectedEntry && !selectedEntry.isGhostPlaceholder) {
+    selectedQueueSnapshot = selectedEntry.snapshot;
+    showQueueSnapshot(queueSnapshotLayer, selectedQueueSnapshot, unitsById(), guardianAssignment);
   }
 }
 const dragPreviewLayer = document.getElementById('drag-preview-layer');
@@ -5070,6 +5080,20 @@ function tickInner(time) {
     });
   }
 
+  // Queue Selection / Simulation Snapshot (TRD 3.1), round 2 per explicit
+  // user feedback: showing the forecasted (low-opacity) positions ALONGSIDE
+  // everyone's real, current position was itself visual clutter -- the two
+  // sets of dots compete for attention on the same ring. So while a
+  // snapshot is active, every unit's REAL icon is suppressed entirely (not
+  // dimmed -- fully hidden) and only the snapshot's own low-opacity
+  // forecast ghosts (rendered separately by showQueueSnapshot) are visible.
+  // Deselecting the same queue icon, or the game actually resuming (see
+  // `if (!paused) clearQueueSnapshotSelection()` below, which already wipes
+  // the snapshot the instant play resumes), both flow back through here on
+  // the very next frame and restore full opacity -- no separate "restore"
+  // codepath needed.
+  const queueSnapshotActive = selectedQueueIndex !== null;
+
   units.forEach((u) => {
     // 1. If it's fanned out (but NOT the one we started dragging), leave it alone
     if (u.isFanned && dragging !== u) return;
@@ -5103,6 +5127,7 @@ function tickInner(time) {
 
     // 4. Apply the calculated position
     updateUnitTransform(u, x, y, faceAngle);
+    u.el.style.opacity = queueSnapshotActive ? '0' : '1';
 
     u.statusRing.setAttribute(
       'stroke',

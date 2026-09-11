@@ -11,8 +11,9 @@
 //   - 3.2: Visual Anchor Status glyph on queue icons.
 //   - 2.1/2.2 (Phase 2): live gesture-preview integration for knockback
 //     and speed-up/slow-down -- ghosted original icon + tracking arrow +
-//     accordion reflow of everyone else, wired into combat.js's existing
-//     radial (knockback) and tangential (speed-change) drag branches.
+//     a reserved gap at the old slot that bystanders shift around (not
+//     into), wired into combat.js's existing radial (knockback) and
+//     tangential (speed-change) drag branches.
 //
 // Deliberately pure where possible: computeQueueForecast() takes a plain
 // snapshot of unit data and returns a plain forecast, with no DOM and no
@@ -517,6 +518,14 @@ export function renderSpeedQueue({
 
   for (let i = 0; i < shown; i++) {
     const entry = forecast[i];
+    // Reserved gap for a queue-preview ghost (see buildExpandedQueueDisplay)
+    // -- this slot index is intentionally left with no REAL icon so the
+    // tracked unit's old position stays vacant on-screen rather than being
+    // reflowed into by a bystander (which used to land it exactly on top
+    // of the ghost drawn there -- see that function's own header comment).
+    // Still consumes slot `i` in the angleForSlot() numbering by simply
+    // not rendering anything this iteration, which is what leaves the gap.
+    if (entry.isGhostPlaceholder) continue;
     const unit = liveUnitsById.get(entry.id);
     const key = keyForOccurrence(entry.id, occurrenceCounts);
     if (!unit) continue;
@@ -564,28 +573,135 @@ export function renderSpeedQueue({
 
 // --- GESTURE PREVIEW OVERLAY (TRD 2.1/2.2) -----------------------------
 //
-// combat.js renders the REAL pooled queue from the CANDIDATE forecast
-// during a live preview (see renderSpeedQueue's own call site there), so
-// bystanders reflow naturally through the normal per-frame easing --
-// this overlay's only job is drawing the tracked unit's OLD-slot ghost
-// (a 50%-opacity copy of its own face, not a generic dashed placeholder
-// -- see history below) and the arrow connecting it to where the unit's
-// own real, now-reflowed icon currently sits. This went through two
-// prior designs based on direct user feedback: dashed circle -> ghost
-// icon copy (ambiguous which unit was moving when a bystander's REAL
-// icon slid into the same slot mid-transition); then a frozen-queue +
-// floating "new position" marker (avoided that collision, but a
-// DIFFERENT one reappeared wherever the floating marker's fixed slot
-// index happened to coincide with an unrelated bystander's still-frozen
-// position, and the rest of the queue's resulting order was invisible
-// during the preview). Reflowing the real queue avoids both: the old
-// slot is genuinely vacated by the reflow (everyone between old and new
-// slides by exactly one), so nothing collides with the ghost, and the
-// full resulting order is visible the whole time. Pooled by unitId (a
-// knockback/speed drag only ever tracks one; a rally or boulder
-// placement can affect several units at once -- see TRD 2.3/2.4's own
-// "could impact multiple units" language).
+// This went through three prior designs based on direct, iterative user
+// feedback, each solving one collision but introducing another:
+//   1. Dashed placeholder circle at the old slot -> ambiguous which unit
+//      was moving when a bystander's REAL icon slid into the same slot
+//      mid-transition.
+//   2. Ghost icon copy (a translucent clone of the unit's own face,
+//      instead of a dashed circle) at the old slot, WITH bystanders
+//      reflowing to close the gap -- fixed the ambiguity, but reflowing
+//      bystanders INTO the vacated old slot put a bystander's real icon
+//      at that exact same angleForSlot() index as the ghost, so the two
+//      still visually collided (just with a clearer ghost image instead
+//      of a dashed circle).
+//   3. Current design, below: bystanders no longer reflow INTO the
+//      tracked unit's old slot at all -- buildExpandedQueueDisplay()
+//      inserts an actual reserved gap into the rendered queue (see its
+//      own comment), so the old slot stays genuinely empty of any real
+//      icon for the ghost to sit in, and the tracked unit's real icon
+//      lands one slot further out than it otherwise would, to make room.
+//      This overlay's job stays the same either way: draw the ghost (its
+//      old-slot position) and the tracking arrow to its real icon's new
+//      position -- both positions are now passed in pre-computed by
+//      buildExpandedQueueDisplay() rather than looked up here via
+//      findIndex on the raw forecasts, since the SLOTS that matter are
+//      the expanded ones actually being rendered, not the raw forecast
+//      array indices. Pooled by unitId (a knockback/speed drag only ever
+//      tracks one; a rally or boulder placement can affect several units
+//      at once -- see TRD 2.3/2.4's own "could impact multiple units"
+//      language).
 const previewOverlayPool = new Map();
+
+// Builds the "reserved gap" queue layout used while a live preview
+// (knockback/speed drag, boulder placement, rally, etc.) is active. Per
+// explicit user feedback + a mockup (round 3 of this feature's visual
+// design -- see the GESTURE PREVIEW OVERLAY comment above for the two
+// earlier attempts this replaced): a bystander reflowing into a tracked
+// unit's just-vacated old slot lands on the exact same angleForSlot()
+// index as the ghost drawn there, so the fix is to stop reflowing bystanders
+// into that slot at all -- insert an actual placeholder into the
+// rendered queue at the old slot instead, so the whole row's slot count
+// temporarily grows by one for every unit actually being tracked+moved
+// this frame, bystanders shift OUTWARD around the reserved gap rather
+// than into it, and the tracked unit's own real icon ends up one slot
+// further along than its raw preview-forecast index would suggest, to
+// make room. Bystanders are assumed to keep the same relative order in
+// both `committedForecast` and `previewForecast` (true for every
+// knockback/speed/rally/boulder preview this module handles -- only the
+// tracked unit(s)' own order relative to everyone else changes), which
+// is what lets each bystander's finished slot be computed purely from
+// where its neighbors fall in each forecast, independent of exactly how
+// many other units are simultaneously being tracked.
+//
+// Returns:
+//   expandedForecast -- pass directly as renderSpeedQueue's `forecast`.
+//     Real entries are the actual forecast objects (so onTapIcon etc.
+//     keep working normally); reserved-gap slots are minimal
+//     `{ isGhostPlaceholder: true }` markers that renderSpeedQueue skips
+//     over (still consuming that slot index, which is what leaves the
+//     visible gap).
+//   slotsByUnitId -- Map<unitId, { oldSlot, newSlot }> giving each
+//     actually-moved tracked unit's ghost slot and real slot in the
+//     EXPANDED numbering above, for renderQueuePreviewOverlay to feed
+//     straight into angleForSlot() -- units that aren't in `trackedIds`,
+//     aren't in both forecasts, or didn't actually change slot are
+//     simply absent from this map (nothing to draw for them).
+export function buildExpandedQueueDisplay({ committedForecast, previewForecast, trackedIds }) {
+  const movedIds = trackedIds.filter((id) => {
+    const oldIndex = committedForecast.findIndex((e) => e.id === id);
+    const newIndex = previewForecast.findIndex((e) => e.id === id);
+    return oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex;
+  });
+
+  if (movedIds.length === 0) {
+    return { expandedForecast: previewForecast, slotsByUnitId: new Map() };
+  }
+
+  const movedSet = new Set(movedIds);
+  const committedIndexOf = new Map(committedForecast.map((e, i) => [e.id, i]));
+  const previewIndexOf = new Map(previewForecast.map((e, i) => [e.id, i]));
+
+  // Bystanders, in their shared (committed === preview) relative order.
+  const working = previewForecast
+    .filter((e) => !movedSet.has(e.id))
+    .map((e) => ({ kind: 'bystander', id: e.id, entry: e }));
+
+  // Finds the array index right after the LAST bystander entry currently
+  // in `working` for which `isBefore(bystanderId)` holds -- i.e. where a
+  // new item belongs so it ends up positioned immediately after that
+  // bystander (or at the very start, if none match). Only ever counts
+  // `kind: 'bystander'` entries, so ghost/real slots already inserted for
+  // OTHER tracked units never skew this -- each insertion is placed
+  // purely relative to the bystanders, independent of insertion order.
+  function insertionIndex(isBefore) {
+    let pos = 0;
+    for (let i = 0; i < working.length; i++) {
+      if (working[i].kind === 'bystander' && isBefore(working[i].id)) pos = i + 1;
+    }
+    return pos;
+  }
+
+  movedIds.forEach((id) => {
+    if (!movedSet.has(id)) return; // guards a duplicate id in trackedIds
+    const oldIndex = committedIndexOf.get(id);
+    const newIndex = previewIndexOf.get(id);
+
+    const ghostPos = insertionIndex((bid) => committedIndexOf.get(bid) < oldIndex);
+    working.splice(ghostPos, 0, { kind: 'ghost', id });
+
+    const realPos = insertionIndex((bid) => previewIndexOf.get(bid) < newIndex);
+    working.splice(realPos, 0, { kind: 'real', id, entry: previewForecast[newIndex] });
+  });
+
+  const expandedForecast = [];
+  const slotsByUnitId = new Map();
+  working.forEach((w, slot) => {
+    if (w.kind === 'ghost') {
+      const prior = slotsByUnitId.get(w.id) || {};
+      slotsByUnitId.set(w.id, { ...prior, oldSlot: slot });
+      expandedForecast.push({ isGhostPlaceholder: true, id: w.id });
+    } else if (w.kind === 'real') {
+      const prior = slotsByUnitId.get(w.id) || {};
+      slotsByUnitId.set(w.id, { ...prior, newSlot: slot });
+      expandedForecast.push(w.entry);
+    } else {
+      expandedForecast.push(w.entry);
+    }
+  });
+
+  return { expandedForecast, slotsByUnitId };
+}
 
 function getPreviewOverlayIcon(layer, unitId) {
   let overlay = previewOverlayPool.get(unitId);
@@ -617,23 +733,22 @@ function getPreviewOverlayIcon(layer, unitId) {
   return overlay;
 }
 
-// `committedForecast` -- the real, uncommitted queue (computeQueueForecast
-//   on the actual live units/rocks).
-// `previewForecast` -- computeQueueForecast on a candidate snapshot with
-//   one or more units' angle/speedMult tentatively overridden, and/or an
-//   extra candidate rock added.
-// `unitIds` -- which unit(s) the live preview is tracking (a single-
-//   element array for a knockback/speed drag; several for a rally or
-//   boulder placement that can move/block more than one unit at once).
-// For each id, finds that unit's FIRST future appearance in each
-// forecast and, if its slot actually moved, draws the ghosted-original +
-// curved tracking arrow between the two positions; any id whose slot
-// didn't change (or isn't in one of the forecasts) has its overlay
-// cleared individually rather than wiping every tracked unit's overlay.
+// `slotsByUnitId` -- the Map returned by buildExpandedQueueDisplay(),
+//   giving each actually-moved tracked unit's { oldSlot, newSlot } in the
+//   SAME expanded slot numbering that renderSpeedQueue is drawing the
+//   rest of the queue with (see that function's own comment for why this
+//   can no longer be recomputed here via a plain findIndex on the raw
+//   forecasts -- the reserved-gap slot a unit lands in depends on how
+//   many OTHER tracked units' gaps fall between it and its neighbors).
+// `unitIds` -- every unit the live preview is tracking (a single-element
+//   array for a knockback/speed drag; several for a rally or boulder
+//   placement that can move/block more than one unit at once) -- used
+//   only to know which pooled overlays to hide when a previously-tracked
+//   unit is no longer moving (dropped from `slotsByUnitId`), without
+//   wiping every tracked unit's overlay just because one stopped moving.
 export function renderQueuePreviewOverlay({
   layer,
-  committedForecast,
-  previewForecast,
+  slotsByUnitId,
   unitIds,
   radius,
   liveUnitsById,
@@ -643,10 +758,9 @@ export function renderQueuePreviewOverlay({
 
   unitIds.forEach((unitId) => {
     const unit = liveUnitsById.get(unitId);
-    const oldIndex = committedForecast.findIndex((e) => e.id === unitId);
-    const newIndex = previewForecast.findIndex((e) => e.id === unitId);
+    const slots = slotsByUnitId.get(unitId);
 
-    if (!unit || oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
+    if (!unit || !slots || slots.oldSlot === undefined || slots.newSlot === undefined) {
       const stale = previewOverlayPool.get(unitId);
       if (stale) {
         stale.arrow.style.opacity = '0';
@@ -656,6 +770,7 @@ export function renderQueuePreviewOverlay({
       return;
     }
 
+    const { oldSlot: oldIndex, newSlot: newIndex } = slots;
     stillTracked.add(unitId);
     const overlay = getPreviewOverlayIcon(layer, unitId);
 
@@ -668,11 +783,12 @@ export function renderQueuePreviewOverlay({
     paintIconFace(overlay.ghost, unit, guardianAssignment);
     overlay.ghost.g.style.opacity = '0.5';
 
-    // The full-opacity floating copy at the candidate new slot -- see
-    // this module's own header comment on why this is a SEPARATE,
-    // additional element rather than the unit's real pooled icon moving
-    // there (the real one stays put at its committed slot until commit).
-    // A smaller index is CLOSER to the action line (angleForSlot is
+    // The tracking arrow points at newPos, which is exactly where
+    // renderSpeedQueue's own reserved-gap layout (buildExpandedQueueDisplay)
+    // is independently placing this unit's real, full-opacity pooled
+    // icon this frame -- this overlay never draws a second copy of the
+    // unit at its new position, only the ghost at the old one plus the
+    // arrow connecting the two.
     // monotonically decreasing as index grows -- see its own comment),
     // so newIndex < oldIndex means the unit moved toward the line
     // (speed up / rally) and sweeps clockwise; newIndex > oldIndex means
@@ -768,23 +884,9 @@ export function resetQueuePool() {
 // dots and the gesture-preview ghost).
 const snapshotGhosts = {};
 
-// `excludeId` -- the snapshot's own subject unit (whichever unit's turn
-// this future step represents). Per explicit user feedback: that unit is
-// necessarily ON the action line at this snapshot moment (its `angle` in
-// the snapshot is always 0, by construction -- see computeQueueForecast's
-// own `best.angle = 0` above), which is true as a matter of course for
-// ANY selected queue slot and so tells the player nothing new -- the
-// preview's entire point is showing where OTHER units land relative to
-// that turn. Worse, rendering it anyway plants a low-opacity ghost right
-// on top of whichever unit is genuinely on the action line at the moment
-// the preview is opened (the common case -- previewing mid-turn, not
-// only during the paused between-turns window), which reads as visual
-// noise rather than information. So the subject's own dot is suppressed
-// from the ring projection; every other unit's is still shown.
-export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById, guardianAssignment, excludeId) {
+export function showQueueSnapshot(layer, snapshotEntries, liveUnitsById, guardianAssignment) {
   const stillNeeded = new Set();
   snapshotEntries.forEach(({ id, angle }) => {
-    if (id === excludeId) return;
     const unit = liveUnitsById.get(id);
     if (!unit) return;
     stillNeeded.add(id);
