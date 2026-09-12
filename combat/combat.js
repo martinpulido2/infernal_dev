@@ -664,6 +664,12 @@ function updateSpeedQueueDisplay() {
       overseerThresholdCount: effectiveOverseerThresholdCount,
       overseerThresholdTarget,
       rocks: candidateRocks,
+      // Keeps every bystander already visible in committedForecast from
+      // vanishing out of the preview -- see computeQueueForecast's own
+      // extraRequiredIds comment for why the shared "everyone gets a
+      // turn" stopping condition alone doesn't guarantee that once the
+      // tracked unit's own change lets the simulation stop sooner.
+      extraRequiredIds: committedForecast.map((e) => e.id),
     });
   }
 

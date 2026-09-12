@@ -98,8 +98,32 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 // `snapshot` is a full copy of every simulated unit's angle at the exact
 // moment this step's unit reaches the action line -- what section 3.1's
 // Simulation Snapshot mode projects onto the rings.
+// `options.extraRequiredIds` -- raw unit ids (not the 'unit:'/'group:' key
+//   format) that this run must ALSO see appear at least once as a pushed
+//   forecast entry before it's allowed to stop, on top of the normal
+//   "every unit/group gets at least one real turn" requirement below.
+//   Exists specifically for a live preview's candidate forecast: a
+//   bystander belonging to a shared-pool group (Overseer/Hell Lord/
+//   Ordeal Inquisitor) only needs ONE dot from that group to satisfy the
+//   group's own requirement, so a SPECIFIC other dot from that same group
+//   that happened to also get a "bonus" appearance in a longer committed
+//   run (simulated further only because the tracked unit used to be
+//   slower and take longer to satisfy ITS OWN requirement) has no
+//   guarantee of reappearing in a shorter preview run where the
+//   now-faster tracked unit stops blocking things sooner -- a real,
+//   reported symptom: speeding a unit up made it correctly jump ahead in
+//   the queue, but the specific bystanders it jumped ahead of vanished
+//   from the display entirely rather than simply shifting later, because
+//   the preview's OWN simulation legitimately never ran long enough to
+//   need to re-simulate them. Passing every id already visible in the
+//   reference (committed) forecast here keeps the preview simulating
+//   until each of them gets its own chance to reappear too, so nothing
+//   already on screen disappears out from under the player mid-preview.
+//   Ignored for any id not present in `units` at all (nothing to wait
+//   for), so it's always safe to pass even when the two forecasts don't
+//   share their full roster.
 export function computeQueueForecast(units, options = {}) {
-  const { overseerThresholdCount = 0, overseerThresholdTarget = 0, maxSteps = 150, rocks = [] } = options;
+  const { overseerThresholdCount = 0, overseerThresholdTarget = 0, maxSteps = 150, rocks = [], extraRequiredIds = [] } = options;
 
   const state = units
     .map((u) => ({
@@ -127,9 +151,13 @@ export function computeQueueForecast(units, options = {}) {
     expiresAt: r.remainingMs,
   }));
 
-  const requiredKeys = new Set(
-    state.map((u) => (u.overseerId ? 'group:' + u.overseerId : 'unit:' + u.id))
-  );
+  const requiredKeys = new Set([
+    ...state.map((u) => (u.overseerId ? 'group:' + u.overseerId : 'unit:' + u.id)),
+    ...(() => {
+      const stateIds = new Set(state.map((u) => u.id));
+      return extraRequiredIds.filter((id) => stateIds.has(id)).map((id) => 'id:' + id);
+    })(),
+  ]);
   const satisfiedKeys = new Set();
 
   let threshCount = overseerThresholdCount;
@@ -298,9 +326,17 @@ export function computeQueueForecast(units, options = {}) {
       forecast.push({
         id: best.id,
         overseerId: best.overseerId,
+        time: simTime,
         snapshot: state.map((u) => ({ id: u.id, angle: u.angle })),
       });
       satisfiedKeys.add(key);
+      // Only tracked when actually requested (extraRequiredIds) -- the
+      // stopping condition below compares satisfiedKeys.size directly
+      // against requiredKeys.size, so unconditionally adding this would
+      // inflate satisfiedKeys past requiredKeys and stop the loop early
+      // even when this id was never required to begin with.
+      const idKey = 'id:' + best.id;
+      if (requiredKeys.has(idKey)) satisfiedKeys.add(idKey);
     }
   }
 
@@ -649,62 +685,80 @@ export function buildExpandedQueueDisplay({ committedForecast, previewForecast, 
   }
 
   const movedSet = new Set(movedIds);
-  // FIRST-occurrence index of each id -- built by hand rather than
-  // `new Map(arr.map((e,i) => [e.id,i]))`, which silently keeps the LAST
-  // matching entry instead (each repeated key's `.set()` overwrites the
-  // one before it). A fast enough unit legitimately appears more than
-  // once in a single forecast (it laps the line again before someone
-  // slower gets even their first turn -- see computeQueueForecast's own
-  // "fast unit laps a slow one" test) and that repeat entry is exactly
-  // the shape a speed-up preview produces: the tracked unit's FIRST
-  // occurrence is the very turn moving up is about, but the overwrite
-  // bug pointed oldIndex/newIndex at whichever occurrence happened to be
-  // simulated LAST instead -- silently substituting a LATER lap for the
-  // soonest one, which is indistinguishable from "the unit's turn got
-  // skipped" from the display's own perspective (a real, reported
-  // symptom: a unit sped up enough to lap someone before that bystander's
-  // own first turn rendered as if it had fallen BEHIND that bystander,
-  // recovering only once the real game actually played forward past it).
-  function firstIndexOf(forecastArr) {
-    const map = new Map();
-    forecastArr.forEach((e, i) => {
-      if (!map.has(e.id)) map.set(e.id, i);
-    });
-    return map;
+  // FIRST-occurrence entry of each id in each forecast -- looked up by
+  // hand (not `new Map(arr.map((e,i) => [e.id,e]))`, which keeps the LAST
+  // matching entry instead, each repeat overwriting the one before it). A
+  // fast enough unit legitimately appears more than once in a single
+  // forecast (it laps the line again before someone slower gets even
+  // their first turn -- see computeQueueForecast's own "fast unit laps a
+  // slow one" test), and that repeat entry is exactly the shape a
+  // speed-up preview produces: the tracked unit's FIRST occurrence is the
+  // very turn moving up is about, but the overwrite bug pointed
+  // oldEntry/newEntry at whichever occurrence happened to be simulated
+  // LAST instead -- silently substituting a LATER lap for the soonest
+  // one, which is indistinguishable from "the unit's turn got skipped"
+  // from the display's own perspective (a real, reported symptom: a unit
+  // sped up enough to lap someone before that bystander's own first turn
+  // rendered as if it had fallen BEHIND that bystander, recovering only
+  // once the real game actually played forward past it).
+  function firstEntryOf(forecastArr, id) {
+    return forecastArr.find((e) => e.id === id);
   }
-  const committedIndexOf = firstIndexOf(committedForecast);
-  const previewIndexOf = firstIndexOf(previewForecast);
 
-  // Bystanders, in their shared (committed === preview) relative order.
+  // Bystanders, each carrying its own simulated crossing TIME (see
+  // computeQueueForecast's own `time: simTime` field) -- the axis ghost/
+  // real placement is computed against below, INSTEAD of array index.
+  // Array index is not a sound way to compare a bystander's position
+  // against the tracked unit's old/new turn: `committedForecast` and
+  // `previewForecast` can end up completely different LENGTHS, with
+  // completely different numbers of bystander repeat-laps, whenever the
+  // tracked unit's own change shifts how long each simulation has to run
+  // before every unit has had at least one turn -- a unit getting SLOWER
+  // is the common case, since the preview then has to simulate much
+  // further, so bystanders rack up extra laps in the preview that have no
+  // counterpart in the committed array at all. An earlier version of this
+  // function tried to pair up each bystander's Nth committed occurrence
+  // with its Nth preview occurrence to work around exactly this, but that
+  // pairing silently fell apart (falling back to a bystander's LAST known
+  // occurrence for every extra lap beyond what committedForecast even
+  // simulated) whenever the two forecasts' lengths diverged this way --
+  // a real, reported symptom: knock a unit back far enough to force a
+  // much longer preview simulation, and its ghost (its own CURRENT
+  // position) rendered LATER than its own post-knockback real icon, i.e.
+  // the two were effectively swapped. A bystander's own crossing TIME,
+  // unlike its array index, is identical in both simulations regardless
+  // (nothing about the tracked unit's angle/speed affects anyone else's
+  // physics), so time is directly comparable across the two forecasts no
+  // matter how differently shaped they end up.
   const working = previewForecast
     .filter((e) => !movedSet.has(e.id))
     .map((e) => ({ kind: 'bystander', id: e.id, entry: e }));
 
   // Finds the array index right after the LAST bystander entry currently
-  // in `working` for which `isBefore(bystanderId)` holds -- i.e. where a
+  // in `working` whose own crossing time is before `time` -- i.e. where a
   // new item belongs so it ends up positioned immediately after that
   // bystander (or at the very start, if none match). Only ever counts
   // `kind: 'bystander'` entries, so ghost/real slots already inserted for
   // OTHER tracked units never skew this -- each insertion is placed
   // purely relative to the bystanders, independent of insertion order.
-  function insertionIndex(isBefore) {
+  function insertionIndex(time) {
     let pos = 0;
     for (let i = 0; i < working.length; i++) {
-      if (working[i].kind === 'bystander' && isBefore(working[i].id)) pos = i + 1;
+      if (working[i].kind === 'bystander' && working[i].entry.time < time) pos = i + 1;
     }
     return pos;
   }
 
   movedIds.forEach((id) => {
     if (!movedSet.has(id)) return; // guards a duplicate id in trackedIds
-    const oldIndex = committedIndexOf.get(id);
-    const newIndex = previewIndexOf.get(id);
+    const oldEntry = firstEntryOf(committedForecast, id);
+    const newEntry = firstEntryOf(previewForecast, id);
 
-    const ghostPos = insertionIndex((bid) => committedIndexOf.get(bid) < oldIndex);
+    const ghostPos = insertionIndex(oldEntry.time);
     working.splice(ghostPos, 0, { kind: 'ghost', id });
 
-    const realPos = insertionIndex((bid) => previewIndexOf.get(bid) < newIndex);
-    working.splice(realPos, 0, { kind: 'real', id, entry: previewForecast[newIndex] });
+    const realPos = insertionIndex(newEntry.time);
+    working.splice(realPos, 0, { kind: 'real', id, entry: newEntry });
   });
 
   const expandedForecast = [];
