@@ -442,6 +442,11 @@
       import { initOrientationPhase } from './orientation/select.js';
       import { mountMapPhase, unmountMapPhase } from './map/mapPhase.js';
       import { startCombatPhase } from './combat/combat.js';
+      import {
+        installNarrativeTrigger,
+        showNarrativeTrigger,
+        hideNarrativeTrigger,
+      } from './narrative/introSequence.js';
 
       // Installed ONCE for the whole app -- fullscreen-on-first-tap,
       // rotate-to-landscape fallback, and all three layers of zoom
@@ -462,6 +467,34 @@
         COMBAT: document.getElementById('screen-combat'),
       };
 
+      // Independent of preloadsReady below — the narrative sequence's own
+      // art lazy-loads only when a player actually taps the book icon,
+      // so there's no reason to gate the button itself on the orientation
+      // phase's preloaded assets finishing first.
+      installNarrativeTrigger();
+
+      // The button is only allowed on the opening ring screen — never
+      // map or combat. 'ORIENTATION' also covers character select and
+      // seat/edge picking (gameState has no finer-grained phase for
+      // those), so this alone isn't sufficient to hide it in time;
+      // orientation/select.js separately calls hideNarrativeTrigger()
+      // the instant the player taps past the ring, which is the actual
+      // moment it needs to disappear. This phase-level check exists as
+      // the backstop for MAP/COMBAT — including a mid-run page refresh,
+      // which restores straight into whichever phase was persisted
+      // BEFORE initOrientationPhase() below gets a chance to run (it
+      // always re-runs on load regardless of the restored phase, so
+      // without this the button would otherwise reappear on top of a
+      // resumed map/combat screen).
+      function syncNarrativeTriggerVisibility(state) {
+        if (state.phase === 'ORIENTATION') {
+          showNarrativeTrigger();
+        } else {
+          hideNarrativeTrigger();
+        }
+      }
+      syncNarrativeTriggerVisibility(getState());
+
       let mountedMap = false;
       let mountedCombatForPendingId = null;
 
@@ -473,6 +506,7 @@
 
       subscribe((state) => {
         showPhase(state.phase);
+        syncNarrativeTriggerVisibility(state);
 
         if (state.phase === 'MAP' && !mountedMap) {
           mountedMap = true;
@@ -495,12 +529,22 @@
 
       // Kick off whichever phase gameState is already in (fresh load ->
       // ORIENTATION; a mid-run refresh restores wherever sessionStorage
-      // left off, per gameState.js's own persistence). Delayed until
-      // preloadsReady resolves so a.'s Arrow.png-masked elements (visible
-      // from its very first frame) never render before that asset has
-      // actually finished loading -- see platformHardening.js's own
-      // comment on preloadImage for the race this closes.
-      preloadsReady.then(() => {
+      // left off, per gameState.js's own persistence). Waits on
+      // preloadsReady so a.'s Arrow.png-masked elements (visible from its
+      // very first frame) don't render before that asset has loaded --
+      // see platformHardening.js's own comment on preloadImage.
+      //
+      // ...but only up to a point. Preloading is an OPTIMIZATION, never a
+      // prerequisite: every asset in that list is also requested by the
+      // code that actually uses it, and the orientation vortex now starts
+      // and self-heals regardless of whether its ring art has arrived
+      // (see select.js's startVortex). Blocking the entire app's mount on
+      // the preload batch meant a slow or stalled server could hold the
+      // whole screen hostage -- so race it against a short deadline and
+      // mount anyway if it's taking too long. Assets that are still in
+      // flight simply land a moment later, exactly as they would have.
+      const startupDeadline = new Promise((resolve) => setTimeout(resolve, 2000));
+      Promise.race([preloadsReady, startupDeadline]).then(() => {
         initOrientationPhase();
         showPhase(getState().phase);
         if (getState().phase === 'MAP') { mountedMap = true; mountMapPhase(screens.MAP); }
