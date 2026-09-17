@@ -20,7 +20,39 @@ export function installPlatformHardening({ preloadImages = [] } = {}) {
   // call, and its arrow icons are visible from the very first frame) can
   // await it first — see preloadImage's own comment for why "fire and
   // forget" wasn't actually safe here.
-  return Promise.all(preloadImages.map(preloadImage));
+  //
+  // Concurrency-limited rather than Promise.all over the whole list. The
+  // previous all-at-once version fired every preload simultaneously —
+  // 14 of them, plus combat.js's own module-level victory.png <img> —
+  // against a browser limit of ~6 connections per origin. On a fast local
+  // server that's invisible. On a slow or cold one (a StackBlitz
+  // WebContainer still warming up), those 15 low-priority image requests
+  // take every available connection and hold it, so the REAL request the
+  // UI makes for the same asset a moment later (select.js's own
+  // `ringImage.src = '/public/Ring1.png'`) queues behind them and can sit
+  // pending indefinitely — the app then renders with no art at all, which
+  // is exactly the black-launch-screen symptom this was reported for.
+  //
+  // Keeping a few slots free means the UI's own asset requests always
+  // have somewhere to go, and the preload still warms the cache — just
+  // over a few more round trips instead of one stampede.
+  return preloadWithLimit(preloadImages, 3);
+}
+
+// Runs `tasks` through `preloadImage` at most `limit` at a time. Resolves
+// when every one has settled (preloadImage never rejects — see its own
+// comment), so callers awaiting this can't be left hanging by one bad
+// asset.
+function preloadWithLimit(srcs, limit) {
+  let next = 0;
+  function runOne() {
+    if (next >= srcs.length) return Promise.resolve();
+    const src = srcs[next++];
+    return preloadImage(src).then(runOne);
+  }
+  return Promise.all(
+    Array.from({ length: Math.min(limit, srcs.length) }, runOne)
+  );
 }
 
 // --- Fullscreen -----------------------------------------------------

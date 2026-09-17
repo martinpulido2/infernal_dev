@@ -6,9 +6,15 @@ import {
   recordPlayerTurn,
   recordGuardianDefeat,
   recordCombatVictory,
+  recordEnemyTurn,
+  recordManualCorruptionAdjustment,
+  recordConsume,
+  recordTaint,
+  recordOptionalCorruption,
 } from '../gameState.js';
 import { getCircleForRing, getOverseerForRing, getOrdealEncounter, getHellLord, INQUISITOR_SLOTS_BY_PRIORITY, FIEND_POOL, HARDER_FIEND_RING_THRESHOLD, shouldDealFiend, SOUL_SHARD_AWARDS } from '../enemyData.js';
 import { CORNER_INDEX_TO_NAME, CORNER_CSS, EDGE_ROTATION, CORNER_BOX_SIZE } from '../layoutConstants.js';
+import { buildCorruptionStatsSection } from '../runStatsDisplay.js';
 import {
   computeQueueForecast,
   renderSpeedQueue,
@@ -1443,6 +1449,7 @@ defeatScreen.style.cssText = `
 defeatScreen.innerHTML = `
   <div style="color:#c0392b; font-size:56px; font-weight:700; letter-spacing:4px; pointer-events:none;">DEFEAT</div>
   <div style="color:#7a2020; font-size:20px; margin-top:10px; pointer-events:none;">Corruption has consumed the party</div>
+  <div id="defeat-corruption-stats" style="pointer-events:none; margin-top:24px; max-height:40vh; overflow-y:auto;"></div>
   <div style="color:#5a3030; font-size:14px; margin-top:18px; pointer-events:none;">Double-tap anywhere to return to the beginning</div>
 `;
 document.getElementById('app').appendChild(defeatScreen);
@@ -1464,6 +1471,72 @@ ordealFailScreen.innerHTML = `
   <div style="color:#4a4438; font-size:14px; margin-top:18px; pointer-events:none;">Double-tap anywhere to continue</div>
 `;
 document.getElementById('app').appendChild(ordealFailScreen);
+
+// --- OPTIONAL CORRUPTION LOG -------------------------------------------
+// The one piece of the Rush/Dynamic corruption-data-collection work (see
+// /areas/inferno-card-game.md) the app genuinely can't infer on its own:
+// WHY a manual corruption increase happened. Enemy behaviors and curse
+// cards are physical -- the app has no way to read "this behavior offers
+// corruption instead of a penalty" off a card. Everything else (enemy
+// turns, the drag itself, Consume, Taint) is recorded automatically at
+// its own mechanical call site; this is the only thing a player has to
+// manually tap, and only for the three trade-off categories that were
+// actually asked for.
+//
+// This is deliberately a single global panel, not per-guardian -- unlike
+// Consume/Taint (which act on one specific enemy's own corruption stat),
+// these three categories are being tallied as run-wide totals, not
+// attributed to a specific enemy, so there's no reason to duplicate the
+// buttons once per guardian card the way consume/taintBtn are.
+//
+// Visibility is kept in lockstep with controlRing (the corruption ring +
+// consume/taint cluster) rather than combatScreen -- controlRing is what
+// every one of checkVictory/triggerDefeat/triggerOrdealFailure/
+// defeatOrdeal already hides the instant a combat ends, and what
+// startCombat() shows again -- so piggybacking on that exact flag means
+// this panel can't ever be left tappable after a fight's already over.
+//
+// NOTE for design: bottom-center, unrotated -- like the narrative book
+// icon (see narrative/introSequence.js), this doesn't try to solve which
+// of 4 seated players "owns" the reading angle for a shared decision.
+// Worth a real look on an actual 4-player tablet layout alongside that
+// same open question.
+const optionalCorruptionPanel = document.createElement('div');
+optionalCorruptionPanel.id = 'optional-corruption-panel';
+optionalCorruptionPanel.style.cssText = `
+  position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+  display:none; z-index:55; gap:8px; align-items:center;
+  font-family:system-ui,-apple-system,sans-serif;
+`;
+const OPTIONAL_CORRUPTION_BUTTONS = [
+  { category: 'corruptedCard', label: 'Corrupted Card' },
+  { category: 'acceptedInsteadOfPenalty', label: 'Took Corruption\n(avoided penalty)' },
+  { category: 'triggeredOnEnemy', label: 'Triggered on Enemy' },
+];
+OPTIONAL_CORRUPTION_BUTTONS.forEach(({ category, label }) => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = label;
+  btn.style.cssText = `
+    background:rgba(11,7,6,0.78); color:#e8ddb5; border:1.5px solid rgba(255,255,255,0.3);
+    border-radius:8px; font-size:11px; line-height:1.3; padding:6px 10px; white-space:pre-line;
+    text-align:center; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+  `;
+  btn.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    recordOptionalCorruption(category);
+    // Brief tap confirmation -- same "did that register" concern the
+    // narrative book icon's :active state addresses, just via a quick
+    // color flash here since these buttons carry no icon to scale.
+    btn.style.background = 'rgba(244,193,74,0.55)';
+    setTimeout(() => {
+      btn.style.background = 'rgba(11,7,6,0.78)';
+    }, 200);
+  });
+  optionalCorruptionPanel.appendChild(btn);
+});
+document.getElementById('app').appendChild(optionalCorruptionPanel);
 
 let resultLastTap = 0; // shared double-tap timer for victory/defeat/ordeal-fail screens
 
@@ -1576,6 +1649,7 @@ function checkVictory() {
   victoryLocked = true;
   setPaused(true);
   controlRing.style.display = 'none';
+  optionalCorruptionPanel.style.display = 'none';
   units.forEach((u) => (u.el.style.display = 'none'));
   victoryScreen.style.display = 'flex';
 }
@@ -1597,8 +1671,15 @@ function triggerDefeat() {
   victoryLocked = true;
   setPaused(true);
   controlRing.style.display = 'none';
+  optionalCorruptionPanel.style.display = 'none';
   units.forEach((u) => (u.el.style.display = 'none'));
   removePlayerConsoles();
+  // Read BEFORE the screen's own double-tap handler calls resetRun() --
+  // that wipes gameState (runStats included), so this is the last moment
+  // this run's actual totals still exist to read.
+  const statsContainer = document.getElementById('defeat-corruption-stats');
+  statsContainer.innerHTML = '';
+  statsContainer.appendChild(buildCorruptionStatsSection(getState().runStats));
   defeatScreen.style.display = 'flex';
 }
 
@@ -1615,6 +1696,7 @@ function triggerOrdealFailure() {
   victoryLocked = true;
   setPaused(true);
   controlRing.style.display = 'none';
+  optionalCorruptionPanel.style.display = 'none';
   units.forEach((u) => (u.el.style.display = 'none'));
   removePlayerConsoles();
   ordealFailScreen.style.display = 'flex';
@@ -1630,6 +1712,7 @@ function defeatOrdeal() {
   victoryLocked = true;
   setPaused(true);
   controlRing.style.display = 'none';
+  optionalCorruptionPanel.style.display = 'none';
   units.forEach((u) => (u.el.style.display = 'none'));
   victoryScreen.style.display = 'flex';
 }
@@ -1798,6 +1881,7 @@ document.addEventListener('pointerup', () => {
   if (delta !== 0) {
     saveState();
     applyCorruptionDelta(delta);
+    recordManualCorruptionAdjustment(delta);
     // Was missing here specifically -- every OTHER path that changes
     // corruption (the per-turn auto-increment, taint) already calls this
     // right after. Without it, dragging the corruption stat directly up
@@ -2135,6 +2219,7 @@ function renderPlayerConsoleImmediate(pNum) {
         saveState();
         ordealState.corruption -= 1;
         applyCorruptionDelta(1);
+        recordConsume();
         refreshAllConsoles();
       }
     } else if (isInquisitor) {
@@ -2143,12 +2228,14 @@ function renderPlayerConsoleImmediate(pNum) {
       // infinite"). The party-side effect still happens every time.
       saveState();
       applyCorruptionDelta(1);
+      recordConsume();
       refreshAllConsoles();
     } else if (g.corruption > 0) {
       saveState();
       g.corruption -= 1;
       syncOverseerGroup(g);
       applyCorruptionDelta(1);
+      recordConsume();
       refreshAllConsoles();
     }
   });
@@ -2178,6 +2265,7 @@ function renderPlayerConsoleImmediate(pNum) {
     }
     // Inquisitor: no stat to increment -- infinite already (spec item A).
     applyCorruptionDelta(-1);
+    recordTaint();
     refreshAllConsoles();
   });
   card.appendChild(taintBtn);
@@ -2445,6 +2533,7 @@ function startCombat() {
   victoryScreen.style.display = 'none';
   defeatScreen.style.display = 'none';
   controlRing.style.display = '';
+  optionalCorruptionPanel.style.display = 'flex';
   renderCorruptionRing(); // corruption itself persists across combats — only re-render
   const startAngle = 3; // everyone begins just after the action line
 
@@ -4860,6 +4949,17 @@ function tickInner(time) {
         if (finisher.id.startsWith('player_')) {
           const pNum = Number(finisher.id.split('_')[1]);
           recordPlayerTurn(pNum - 1); // gameState's players array is 0-indexed; pNum is 1-indexed
+        } else {
+          // Every non-player finisher that reaches this point already IS
+          // a real, stopping turn — isOverseerPassThrough (guarding this
+          // whole branch) is exactly what filters out the individual dot
+          // crossings that DON'T count as a turn for a shared boss/
+          // Inquisitor. So a normal enemy's dot arriving here is one real
+          // turn, and a shared boss/Inquisitor's dot arriving here is
+          // also exactly one real turn — the threshold trip itself, not
+          // each contributing player's dot pass. Same counter, no
+          // special-casing needed for isSharedBossGroup here.
+          recordEnemyTurn();
         }
       }
 

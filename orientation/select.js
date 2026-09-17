@@ -10,6 +10,7 @@
 // currentAppState = 'GAME_ACTIVE'.
 
 import { patchState } from '../gameState.js';
+import { hideNarrativeTrigger } from '../narrative/introSequence.js';
 
 export function initOrientationPhase() {
 
@@ -178,7 +179,13 @@ export function initOrientationPhase() {
         ctx.save();
         ctx.translate(centerX, centerY);
         ctx.rotate(ringRotationAngle);
-        if (ringImage.complete) {
+        // naturalWidth, not just .complete: a FAILED image reports
+        // complete === true with naturalWidth === 0, and passing that to
+        // drawImage throws an InvalidStateError -- which, inside the
+        // rAF loop, would kill every subsequent frame and take the
+        // particles down with it. Checking the decoded width means a
+        // broken ring costs only the ring.
+        if (ringImage.complete && ringImage.naturalWidth > 0) {
           ctx.drawImage(
             ringImage,
             -displaySize / 2,
@@ -308,6 +315,10 @@ export function initOrientationPhase() {
 
       function transitionToCharSelect() {
         currentAppState = 'CHAR_SELECT';
+        // The narrative book icon is only allowed on the ring screen
+        // itself (see narrative/introSequence.js's visibility note) —
+        // this is the exact moment that's no longer true.
+        hideNarrativeTrigger();
         canvas.style.display = 'none';
         document.getElementById('ringInstruction').style.display = 'none';
         document.getElementById('charSelectUI').style.display = 'block';
@@ -518,16 +529,43 @@ export function initOrientationPhase() {
         if (currentAppState === 'RING') resizeCanvas();
       });
 
-      ringImage.onload = () => {
-        resizeCanvas();
-        initParticles();
-        requestAnimationFrame(animate);
-      };
-
-      if (ringImage.complete) {
+      // Vortex startup. Previously this ONLY ever began from
+      // ringImage.onload / ringImage.complete -- which meant a Ring1.png
+      // that was slow, stalled, or failed outright never started the
+      // animation loop AT ALL. Not just "ring missing, particles still
+      // spinning": animate() was never called even once, so the canvas
+      // was never drawn to and sat pure black, with only the DOM
+      // "double-tap the abyss" caption visible on top of it. That's a
+      // black launch screen caused by one asset request, even though
+      // every particle in the vortex is drawn independently of that
+      // image.
+      //
+      // The loop already re-checks ringImage each frame (see the
+      // drawImage guard in animate()), so starting WITHOUT the image is
+      // safe and self-healing -- if it arrives late, the ring simply
+      // fades in on the next frame that sees it decoded. So: start on
+      // whichever of load / error / timeout happens first, and never
+      // start twice.
+      let vortexStarted = false;
+      function startVortex() {
+        if (vortexStarted) return;
+        vortexStarted = true;
         resizeCanvas();
         initParticles();
         requestAnimationFrame(animate);
       }
+
+      ringImage.onload = startVortex;
+      // A 404/decode failure must not leave a black screen -- run the
+      // vortex without the ring rather than not at all.
+      ringImage.onerror = startVortex;
+      // Backstop for the case that actually bit in StackBlitz: a request
+      // that neither loads nor errors, just hangs (the browser's 6-
+      // connections-per-origin pool saturated by the preload batch, so
+      // this one queues behind them indefinitely). Neither handler above
+      // ever fires in that state.
+      setTimeout(startVortex, 2000);
+
+      if (ringImage.complete) startVortex();
 
 } // end initOrientationPhase

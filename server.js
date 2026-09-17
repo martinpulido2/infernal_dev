@@ -54,7 +54,14 @@ const server = http.createServer((req, res) => {
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Content-Length': data.length,
+      // No-store rather than letting a proxy (StackBlitz's WebContainer
+      // preview sits behind one) decide its own caching/revalidation
+      // behavior for assets that change on every edit during dev.
+      'Cache-Control': 'no-store',
+    });
     res.end(data);
   });
 });

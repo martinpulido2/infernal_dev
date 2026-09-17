@@ -8,6 +8,7 @@
 // gameState.js's own runStats comment for the data shape.
 
 import { getState, resetRun } from '../gameState.js';
+import { buildCorruptionStatsSection } from '../runStatsDisplay.js';
 
 let mounted = false;
 
@@ -21,7 +22,17 @@ export function renderVictoryRecap(container) {
   mounted = true;
 
   const state = getState();
-  const { defeatLog, turnsByPlayerIndex, guardianDefeatsByPlayerIndex } = state.runStats;
+  const {
+    defeatLog,
+    turnsByPlayerIndex,
+    guardianDefeatsByPlayerIndex,
+    enemyTurnsFaced,
+    corruptionManualUp,
+    corruptionManualDown,
+    consumeCount,
+    taintCount,
+    optionalCorruption,
+  } = state.runStats;
   const players = state.players;
 
   // Group the (already fight-ordered) log by ring, ascending. A run only
@@ -110,6 +121,18 @@ export function renderVictoryRecap(container) {
   el.appendChild(statsRow);
   statsRow.appendChild(buildStatCard('Most Turns Taken', turnsByPlayerIndex, players));
   statsRow.appendChild(buildStatCard('Most Guardians Defeated', guardianDefeatsByPlayerIndex, players));
+
+  // --- Corruption data (Rush/Dynamic mode scaling work) --------------
+  // Run-wide totals, not per-player -- see gameState.js's runStats
+  // comment and /areas/inferno-card-game.md for what these feed into.
+  el.appendChild(buildCorruptionStatsSection({
+    enemyTurnsFaced,
+    corruptionManualUp,
+    corruptionManualDown,
+    consumeCount,
+    taintCount,
+    optionalCorruption,
+  }));
 
   // --- Play again ---
   const again = document.createElement('div');
