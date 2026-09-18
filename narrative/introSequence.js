@@ -41,8 +41,8 @@ import { NARRATIVE_SCREENS } from './narrativeContent.js';
 // --- Timing (TRD §5) ---------------------------------------------------
 const READING_WPM = 200;
 const PRE_ROLL_MS = 1500;   // image alone, no text, before each screen's text fades in
-const POST_ROLL_MS = 1000;  // text held after the reading estimate completes
-const MIN_SCREEN_MS = 5000; // floor, so the short screens (e.g. the Fall) aren't a flash
+const POST_ROLL_MS = 2000;  // text held after the reading estimate completes
+const MIN_SCREEN_MS = 6000; // floor, so the short screens (e.g. the Fall) aren't a flash
 const TEXT_FADE_IN_MS = 400;
 const TEXT_FADE_OUT_MS = 300;
 const IMAGE_CROSSFADE_MS = 700;
