@@ -52,6 +52,12 @@ function defaultState() {
   return {
     players: [],               // populated at orientation-select confirm
     phase: 'ORIENTATION',      // 'ORIENTATION' | 'MAP' | 'COMBAT'
+    mode: 'STANDARD',          // 'STANDARD' | 'RUSH' — see map/mapConstants.js's
+                                // GAME_MODES. Chosen at orientation-select
+                                // (orientation/select.js's mode panel) before
+                                // finishOrientationSelect() can advance to MAP;
+                                // this default only matters for the brief
+                                // window before that choice is made.
     seed: null,                // map seed, so a defeated run's map can be
                                 // regenerated identically if you ever want
                                 // "same map, new attempt" instead of fresh
@@ -147,9 +153,10 @@ function defaultState() {
 }
 
 let state = load() || defaultState();
-// A session persisted before runStats existed won't have it (or won't have
-// every field in it, if it's from a version with a partial shape) --
-// backfill defensively so nothing downstream has to null-check every read.
+// A session persisted before runStats/mode existed won't have them (or won't
+// have every field, if from a version with a partial shape) -- backfill
+// defensively so nothing downstream has to null-check every read.
+if (!state.mode) state.mode = 'STANDARD';
 if (!state.runStats) {
   state.runStats = defaultState().runStats;
 } else {

@@ -11,6 +11,8 @@
 
 import { patchState } from '../gameState.js';
 import { hideNarrativeTrigger } from '../narrative/introSequence.js';
+import { hideTutorialTrigger } from '../tutorial/tutorialTrigger.js';
+import { GAME_MODES } from '../map/mapConstants.js';
 
 export function initOrientationPhase() {
 
@@ -84,6 +86,10 @@ export function initOrientationPhase() {
       let playerSelections = [null, null, null, null]; // Maps player/corner index to charId
       let activePlayers = []; // List of { cornerIndex, charId, colorHex }
       let orientationChoices = {}; // Maps cornerIndex to chosen orientation ('edge1' or 'edge2')
+      let selectedGameMode = null; // GAME_MODES.STANDARD | GAME_MODES.RUSH — set by
+                                    // the center mode panel (setupModeSelector, below);
+                                    // finishOrientationSelect() cannot fire until this
+                                    // AND every active player's orientation are both set.
 
       function resizeCanvas() {
         const dpr = window.devicePixelRatio || 1;
@@ -315,10 +321,12 @@ export function initOrientationPhase() {
 
       function transitionToCharSelect() {
         currentAppState = 'CHAR_SELECT';
-        // The narrative book icon is only allowed on the ring screen
-        // itself (see narrative/introSequence.js's visibility note) —
-        // this is the exact moment that's no longer true.
+        // The narrative book icon (and its tutorial-compass companion)
+        // are only allowed on the ring screen itself (see
+        // narrative/introSequence.js's visibility note) — this is the
+        // exact moment that's no longer true.
         hideNarrativeTrigger();
+        hideTutorialTrigger();
         canvas.style.display = 'none';
         document.getElementById('ringInstruction').style.display = 'none';
         document.getElementById('charSelectUI').style.display = 'block';
@@ -346,6 +354,7 @@ export function initOrientationPhase() {
           currentAppState = 'ORIENTATION_SELECT';
           document.getElementById('charSelectUI').style.display = 'none';
           setupOrientationSelector();
+          setupModeSelector();
         } else {
           const status = document.getElementById('statusMessage');
           status.innerText = 'Select at least 1 character!';
@@ -447,6 +456,77 @@ export function initOrientationPhase() {
         });
       }
 
+      // Mode options shown in the center panel. Array-driven rather than
+      // two hardcoded buttons so adding Dynamic later (see
+      // /areas/inferno-card-game.md -- gated on the corruption-scaling
+      // data collection Marty's about to start running) is just another
+      // entry here, not new structural code.
+      const MODE_OPTIONS = [
+        {
+          id: GAME_MODES.STANDARD,
+          label: 'Standard',
+          desc: 'The full descent — a combat every circle.',
+        },
+        {
+          id: GAME_MODES.RUSH,
+          label: 'Rush',
+          desc: 'A faster descent — combat required only every other circle.',
+        },
+      ];
+
+      let modeButtonEls = {};
+
+      // Center panel, shown alongside the corner orientation arrows so the
+      // whole party settles seating AND mode together before the map
+      // generates. A single shared choice, not per-player — any player can
+      // tap either option, same as the optional-corruption panel in
+      // combat.js is a shared control rather than one-per-seat.
+      function setupModeSelector() {
+        const modeUI = document.getElementById('modeSelectUI');
+        modeUI.style.display = 'flex';
+        modeUI.innerHTML = '';
+        modeButtonEls = {};
+        selectedGameMode = null;
+
+        const heading = document.createElement('div');
+        heading.className = 'mode-select-heading';
+        heading.textContent = 'Choose Your Descent';
+        modeUI.appendChild(heading);
+
+        const row = document.createElement('div');
+        row.className = 'mode-select-row';
+        MODE_OPTIONS.forEach((opt) => {
+          const btn = document.createElement('div');
+          btn.className = 'mode-option';
+          btn.innerHTML = `<div class="mode-option-label">${opt.label}</div><div class="mode-option-desc">${opt.desc}</div>`;
+          btn.addEventListener('click', () => chooseGameMode(opt.id));
+          modeButtonEls[opt.id] = btn;
+          row.appendChild(btn);
+        });
+        modeUI.appendChild(row);
+      }
+
+      function chooseGameMode(modeId) {
+        selectedGameMode = modeId;
+        Object.entries(modeButtonEls).forEach(([id, el]) => {
+          el.classList.toggle('selected', id === modeId);
+        });
+        maybeFinishOrientationSelect();
+      }
+
+      // Shared completion check -- called after EITHER an orientation pick
+      // or a mode pick, since the two happen independently/in either order
+      // and finishOrientationSelect() can't fire until both are done.
+      function maybeFinishOrientationSelect() {
+        if (
+          selectedGameMode !== null &&
+          Object.keys(orientationChoices).length === activePlayers.length
+        ) {
+          currentAppState = 'GAME_ACTIVE';
+          finishOrientationSelect();
+        }
+      }
+
       function buildOrientationArrow(player, edge, positionStyle) {
         const arrow = document.createElement('div');
         arrow.className = 'orientation-arrow';
@@ -481,13 +561,10 @@ export function initOrientationPhase() {
         cornerDiv.innerHTML = '';
         cornerDiv.appendChild(buildPlayerLabel(player, playerNumber, edge));
 
-        // Once every active player has locked in an orientation, the
-        // selection phase is complete — hand the full roster off to
-        // shared state and advance to the map phase.
-        if (Object.keys(orientationChoices).length === activePlayers.length) {
-          currentAppState = 'GAME_ACTIVE';
-          finishOrientationSelect();
-        }
+        // Once every active player has locked in an orientation AND the
+        // party has chosen a mode, the selection phase is complete — hand
+        // the full roster off to shared state and advance to the map phase.
+        maybeFinishOrientationSelect();
       }
 
       // Merges activePlayers (charId + color + corner) with
@@ -508,7 +585,7 @@ export function initOrientationPhase() {
             soulShardsMax: 0,
           };
         });
-        patchState({ players, phase: 'MAP' });
+        patchState({ players, phase: 'MAP', mode: selectedGameMode });
       }
 
       function buildPlayerLabel(player, playerNumber, edge) {

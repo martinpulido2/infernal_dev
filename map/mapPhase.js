@@ -123,7 +123,11 @@ export function mountMapPhase(containerEl) {
     if (!validation.valid) {
       console.warn('Map validation violations:', validation.violations);
     }
-    runState = createRunState(map);
+    // state.mode was set at orientation-select (see orientation/select.js's
+    // mode panel) and defaults to STANDARD if somehow absent (shouldn't
+    // happen -- finishOrientationSelect() requires a mode choice before
+    // advancing -- but createRunState's own default covers it either way).
+    runState = createRunState(map, state.mode);
     patchState({ seed: map.seed, mapRunState: runState });
   }
 
