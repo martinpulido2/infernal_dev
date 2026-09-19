@@ -52,6 +52,12 @@ function defaultState() {
   return {
     players: [],               // populated at orientation-select confirm
     phase: 'ORIENTATION',      // 'ORIENTATION' | 'MAP' | 'COMBAT'
+    mode: 'STANDARD',          // 'STANDARD' | 'RUSH' — see map/mapConstants.js's
+                                // GAME_MODES. Chosen at orientation-select
+                                // (orientation/select.js's mode panel) before
+                                // finishOrientationSelect() can advance to MAP;
+                                // this default only matters for the brief
+                                // window before that choice is made.
     seed: null,                // map seed, so a defeated run's map can be
                                 // regenerated identically if you ever want
                                 // "same map, new attempt" instead of fresh
@@ -100,14 +106,57 @@ function defaultState() {
                                          // entry to name, and isn't
                                          // really "an enemy defeated" in
                                          // the same sense.
+
+      // --- Added for corruption-scaling data collection (Rush/Dynamic
+      // mode design work) — see /areas/inferno-card-game.md. Run-wide
+      // totals, not per-player; the point is feeding the Rush/Dynamic
+      // scaling math, not a leaderboard. Every field here is something
+      // the app can observe itself EXCEPT optionalCorruption, which
+      // requires the player to say why a manual corruption increase
+      // happened (the app has no way to read a physical enemy/curse
+      // card's text) — see recordOptionalCorruption()'s own comment.
+      enemyTurnsFaced: 0,               // count of real enemy turns (see
+                                         // recordEnemyTurn() below) — for
+                                         // a shared boss (Overseer/Hell
+                                         // Lord) or an Inquisitor, this is
+                                         // the cumulative-threshold trip
+                                         // itself, NOT each individual
+                                         // dot's pass-through, matching
+                                         // "number of threshold trips for
+                                         // their real turns" as specified.
+      corruptionManualUp: { events: 0, total: 0 },   // corruption RING
+      corruptionManualDown: { events: 0, total: 0 }, // DRAG only (see
+                                         // corruptionHitArea's pointerup
+                                         // handler) — i.e. corruption
+                                         // gained from enemy behaviors/
+                                         // curses, or removed via a
+                                         // soul's innate ability. Explicitly
+                                         // NOT the per-turn auto-increment
+                                         // (that's deterministic — one per
+                                         // player turn — and NOT Consume/
+                                         // Taint (tracked separately below,
+                                         // since those are their own
+                                         // distinct coded actions, not a
+                                         // free-form drag).
+      consumeCount: 0,
+      taintCount: 0,
+      optionalCorruption: {             // See recordOptionalCorruption().
+        corruptedCard: 0,               // a. played a corrupted card
+        acceptedInsteadOfPenalty: 0,    // b. accepted corruption instead
+                                         //    of a different penalty
+        triggeredOnEnemy: 0,            // c. chose to trigger a
+                                         //    corruption penalty on an
+                                         //    enemy
+      },
     },
   };
 }
 
 let state = load() || defaultState();
-// A session persisted before runStats existed won't have it (or won't have
-// every field in it, if it's from a version with a partial shape) --
-// backfill defensively so nothing downstream has to null-check every read.
+// A session persisted before runStats/mode existed won't have them (or won't
+// have every field, if from a version with a partial shape) -- backfill
+// defensively so nothing downstream has to null-check every read.
+if (!state.mode) state.mode = 'STANDARD';
 if (!state.runStats) {
   state.runStats = defaultState().runStats;
 } else {
@@ -115,6 +164,16 @@ if (!state.runStats) {
     turnsByPlayerIndex: state.runStats.turnsByPlayerIndex || {},
     guardianDefeatsByPlayerIndex: state.runStats.guardianDefeatsByPlayerIndex || {},
     defeatLog: state.runStats.defeatLog || [],
+    enemyTurnsFaced: state.runStats.enemyTurnsFaced || 0,
+    corruptionManualUp: state.runStats.corruptionManualUp || { events: 0, total: 0 },
+    corruptionManualDown: state.runStats.corruptionManualDown || { events: 0, total: 0 },
+    consumeCount: state.runStats.consumeCount || 0,
+    taintCount: state.runStats.taintCount || 0,
+    optionalCorruption: state.runStats.optionalCorruption || {
+      corruptedCard: 0,
+      acceptedInsteadOfPenalty: 0,
+      triggeredOnEnemy: 0,
+    },
   };
 }
 const listeners = new Set();
@@ -271,4 +330,55 @@ export function recordGuardianDefeat(playerIndex) {
 export function recordCombatVictory(entry) {
   const runStats = state.runStats;
   patchState({ runStats: { ...runStats, defeatLog: [...runStats.defeatLog, entry] } });
+}
+
+// --- Corruption-scaling data collection -----------------------------
+// See runStats' own comment in defaultState() for what each field is for.
+// Called from combat.js at the actual mechanical moment each event
+// happens, so the person playing doesn't have to separately tally any of
+// this by hand — except recordOptionalCorruption(), which genuinely can't
+// be inferred from app state (see its own comment).
+
+export function recordEnemyTurn() {
+  const runStats = state.runStats;
+  patchState({ runStats: { ...runStats, enemyTurnsFaced: runStats.enemyTurnsFaced + 1 } });
+}
+
+// delta is whatever the corruption ring drag committed (see combat.js's
+// corruptionHitArea pointerup handler) — positive or negative, never 0
+// (the caller already guards that). Bucketed by sign into events+total so
+// the recap can show both "how many times" and "how much" without a
+// second field ever going out of sync with the first.
+export function recordManualCorruptionAdjustment(delta) {
+  const runStats = state.runStats;
+  const key = delta > 0 ? 'corruptionManualUp' : 'corruptionManualDown';
+  const prev = runStats[key];
+  patchState({
+    runStats: {
+      ...runStats,
+      [key]: { events: prev.events + 1, total: prev.total + delta },
+    },
+  });
+}
+
+export function recordConsume() {
+  const runStats = state.runStats;
+  patchState({ runStats: { ...runStats, consumeCount: runStats.consumeCount + 1 } });
+}
+
+export function recordTaint() {
+  const runStats = state.runStats;
+  patchState({ runStats: { ...runStats, taintCount: runStats.taintCount + 1 } });
+}
+
+// The one thing the app genuinely can't observe on its own: WHY a manual
+// corruption increase happened. Enemy and curse cards are physical —
+// the app has no way to read "this behavior offers corruption instead of
+// a penalty" off a card. category must be one of the three the person
+// asked for: 'corruptedCard' | 'acceptedInsteadOfPenalty' | 'triggeredOnEnemy'.
+export function recordOptionalCorruption(category) {
+  const runStats = state.runStats;
+  const optionalCorruption = { ...runStats.optionalCorruption };
+  optionalCorruption[category] = (optionalCorruption[category] || 0) + 1;
+  patchState({ runStats: { ...runStats, optionalCorruption } });
 }

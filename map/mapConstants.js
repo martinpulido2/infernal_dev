@@ -63,6 +63,36 @@ export const RING_1_ALLOWED_TYPES = new Set([
 
 export const HELL_LORD_ID = 'HELL_LORD';
 
+// ---------------------------------------------------------------------------
+// Game modes
+// ---------------------------------------------------------------------------
+// STANDARD is the original, unmodified rule: every ring requires facing a
+// combat-classified node before descending (see mapRunState.js). RUSH
+// relaxes that to every OTHER ring -- chosen at orientation-select (see
+// orientation/select.js's mode panel) and stored on the run state itself
+// (mapRunState.js's createRunState), not in the map data -- the map
+// generator's output is IDENTICAL regardless of mode; only which moves are
+// legal changes. See mapRunState.js's header comment for why no generation
+// change was needed for this to be dead-end-safe.
+export const GAME_MODES = Object.freeze({
+  STANDARD: 'STANDARD',
+  RUSH: 'RUSH',
+  // DYNAMIC: intentionally not added yet -- see /areas/inferno-card-game.md
+  // for the corruption-scaling data collection that has to happen first.
+});
+
+// Ring 1 is excluded on purpose, not because it needs to be here for
+// correctness -- RING_1_ALLOWED_TYPES (above) already guarantees every
+// Ring 1 node is combat-classified regardless of mode, so whether Ring 1
+// is nominally "mandatory" changes nothing observable. Odd rings beyond it
+// (3, 5, 7) are the ones actually doing the "once every two circles" work.
+export const RUSH_MANDATORY_RINGS = new Set([1, 3, 5, 7]);
+
+export function isCombatRequiredThisRing(ringNumber, mode) {
+  if (mode === GAME_MODES.RUSH) return RUSH_MANDATORY_RINGS.has(ringNumber);
+  return true; // STANDARD, and any unset/unrecognized mode, defaults safe.
+}
+
 export function nodeId(ring, index) {
   return `r${ring}n${index}`;
 }

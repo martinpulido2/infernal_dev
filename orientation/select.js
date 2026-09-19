@@ -10,6 +10,9 @@
 // currentAppState = 'GAME_ACTIVE'.
 
 import { patchState } from '../gameState.js';
+import { hideNarrativeTrigger } from '../narrative/introSequence.js';
+import { hideTutorialTrigger } from '../tutorial/tutorialTrigger.js';
+import { GAME_MODES } from '../map/mapConstants.js';
 
 export function initOrientationPhase() {
 
@@ -83,6 +86,10 @@ export function initOrientationPhase() {
       let playerSelections = [null, null, null, null]; // Maps player/corner index to charId
       let activePlayers = []; // List of { cornerIndex, charId, colorHex }
       let orientationChoices = {}; // Maps cornerIndex to chosen orientation ('edge1' or 'edge2')
+      let selectedGameMode = null; // GAME_MODES.STANDARD | GAME_MODES.RUSH — set by
+                                    // the center mode panel (setupModeSelector, below);
+                                    // finishOrientationSelect() cannot fire until this
+                                    // AND every active player's orientation are both set.
 
       function resizeCanvas() {
         const dpr = window.devicePixelRatio || 1;
@@ -178,7 +185,13 @@ export function initOrientationPhase() {
         ctx.save();
         ctx.translate(centerX, centerY);
         ctx.rotate(ringRotationAngle);
-        if (ringImage.complete) {
+        // naturalWidth, not just .complete: a FAILED image reports
+        // complete === true with naturalWidth === 0, and passing that to
+        // drawImage throws an InvalidStateError -- which, inside the
+        // rAF loop, would kill every subsequent frame and take the
+        // particles down with it. Checking the decoded width means a
+        // broken ring costs only the ring.
+        if (ringImage.complete && ringImage.naturalWidth > 0) {
           ctx.drawImage(
             ringImage,
             -displaySize / 2,
@@ -308,6 +321,12 @@ export function initOrientationPhase() {
 
       function transitionToCharSelect() {
         currentAppState = 'CHAR_SELECT';
+        // The narrative book icon (and its tutorial-compass companion)
+        // are only allowed on the ring screen itself (see
+        // narrative/introSequence.js's visibility note) — this is the
+        // exact moment that's no longer true.
+        hideNarrativeTrigger();
+        hideTutorialTrigger();
         canvas.style.display = 'none';
         document.getElementById('ringInstruction').style.display = 'none';
         document.getElementById('charSelectUI').style.display = 'block';
@@ -335,6 +354,7 @@ export function initOrientationPhase() {
           currentAppState = 'ORIENTATION_SELECT';
           document.getElementById('charSelectUI').style.display = 'none';
           setupOrientationSelector();
+          setupModeSelector();
         } else {
           const status = document.getElementById('statusMessage');
           status.innerText = 'Select at least 1 character!';
@@ -436,6 +456,77 @@ export function initOrientationPhase() {
         });
       }
 
+      // Mode options shown in the center panel. Array-driven rather than
+      // two hardcoded buttons so adding Dynamic later (see
+      // /areas/inferno-card-game.md -- gated on the corruption-scaling
+      // data collection Marty's about to start running) is just another
+      // entry here, not new structural code.
+      const MODE_OPTIONS = [
+        {
+          id: GAME_MODES.STANDARD,
+          label: 'Standard',
+          desc: 'The full descent — a combat every circle.',
+        },
+        {
+          id: GAME_MODES.RUSH,
+          label: 'Rush',
+          desc: 'A faster descent — combat required only every other circle.',
+        },
+      ];
+
+      let modeButtonEls = {};
+
+      // Center panel, shown alongside the corner orientation arrows so the
+      // whole party settles seating AND mode together before the map
+      // generates. A single shared choice, not per-player — any player can
+      // tap either option, same as the optional-corruption panel in
+      // combat.js is a shared control rather than one-per-seat.
+      function setupModeSelector() {
+        const modeUI = document.getElementById('modeSelectUI');
+        modeUI.style.display = 'flex';
+        modeUI.innerHTML = '';
+        modeButtonEls = {};
+        selectedGameMode = null;
+
+        const heading = document.createElement('div');
+        heading.className = 'mode-select-heading';
+        heading.textContent = 'Choose Your Descent';
+        modeUI.appendChild(heading);
+
+        const row = document.createElement('div');
+        row.className = 'mode-select-row';
+        MODE_OPTIONS.forEach((opt) => {
+          const btn = document.createElement('div');
+          btn.className = 'mode-option';
+          btn.innerHTML = `<div class="mode-option-label">${opt.label}</div><div class="mode-option-desc">${opt.desc}</div>`;
+          btn.addEventListener('click', () => chooseGameMode(opt.id));
+          modeButtonEls[opt.id] = btn;
+          row.appendChild(btn);
+        });
+        modeUI.appendChild(row);
+      }
+
+      function chooseGameMode(modeId) {
+        selectedGameMode = modeId;
+        Object.entries(modeButtonEls).forEach(([id, el]) => {
+          el.classList.toggle('selected', id === modeId);
+        });
+        maybeFinishOrientationSelect();
+      }
+
+      // Shared completion check -- called after EITHER an orientation pick
+      // or a mode pick, since the two happen independently/in either order
+      // and finishOrientationSelect() can't fire until both are done.
+      function maybeFinishOrientationSelect() {
+        if (
+          selectedGameMode !== null &&
+          Object.keys(orientationChoices).length === activePlayers.length
+        ) {
+          currentAppState = 'GAME_ACTIVE';
+          finishOrientationSelect();
+        }
+      }
+
       function buildOrientationArrow(player, edge, positionStyle) {
         const arrow = document.createElement('div');
         arrow.className = 'orientation-arrow';
@@ -470,13 +561,10 @@ export function initOrientationPhase() {
         cornerDiv.innerHTML = '';
         cornerDiv.appendChild(buildPlayerLabel(player, playerNumber, edge));
 
-        // Once every active player has locked in an orientation, the
-        // selection phase is complete — hand the full roster off to
-        // shared state and advance to the map phase.
-        if (Object.keys(orientationChoices).length === activePlayers.length) {
-          currentAppState = 'GAME_ACTIVE';
-          finishOrientationSelect();
-        }
+        // Once every active player has locked in an orientation AND the
+        // party has chosen a mode, the selection phase is complete — hand
+        // the full roster off to shared state and advance to the map phase.
+        maybeFinishOrientationSelect();
       }
 
       // Merges activePlayers (charId + color + corner) with
@@ -497,7 +585,7 @@ export function initOrientationPhase() {
             soulShardsMax: 0,
           };
         });
-        patchState({ players, phase: 'MAP' });
+        patchState({ players, phase: 'MAP', mode: selectedGameMode });
       }
 
       function buildPlayerLabel(player, playerNumber, edge) {
@@ -518,16 +606,43 @@ export function initOrientationPhase() {
         if (currentAppState === 'RING') resizeCanvas();
       });
 
-      ringImage.onload = () => {
-        resizeCanvas();
-        initParticles();
-        requestAnimationFrame(animate);
-      };
-
-      if (ringImage.complete) {
+      // Vortex startup. Previously this ONLY ever began from
+      // ringImage.onload / ringImage.complete -- which meant a Ring1.png
+      // that was slow, stalled, or failed outright never started the
+      // animation loop AT ALL. Not just "ring missing, particles still
+      // spinning": animate() was never called even once, so the canvas
+      // was never drawn to and sat pure black, with only the DOM
+      // "double-tap the abyss" caption visible on top of it. That's a
+      // black launch screen caused by one asset request, even though
+      // every particle in the vortex is drawn independently of that
+      // image.
+      //
+      // The loop already re-checks ringImage each frame (see the
+      // drawImage guard in animate()), so starting WITHOUT the image is
+      // safe and self-healing -- if it arrives late, the ring simply
+      // fades in on the next frame that sees it decoded. So: start on
+      // whichever of load / error / timeout happens first, and never
+      // start twice.
+      let vortexStarted = false;
+      function startVortex() {
+        if (vortexStarted) return;
+        vortexStarted = true;
         resizeCanvas();
         initParticles();
         requestAnimationFrame(animate);
       }
+
+      ringImage.onload = startVortex;
+      // A 404/decode failure must not leave a black screen -- run the
+      // vortex without the ring rather than not at all.
+      ringImage.onerror = startVortex;
+      // Backstop for the case that actually bit in StackBlitz: a request
+      // that neither loads nor errors, just hangs (the browser's 6-
+      // connections-per-origin pool saturated by the preload batch, so
+      // this one queues behind them indefinitely). Neither handler above
+      // ever fires in that state.
+      setTimeout(startVortex, 2000);
+
+      if (ringImage.complete) startVortex();
 
 } // end initOrientationPhase
